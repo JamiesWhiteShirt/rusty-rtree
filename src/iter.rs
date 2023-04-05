@@ -2,16 +2,16 @@ use std::slice;
 
 use crate::{
     bounds::{Bounded},
-    Node, NodeRef, filter::{SpatialFilter, Intersectable},
+    Node, NodeRef, filter::{SpatialFilter},
 };
 
-pub struct Iter<'a, N, const D: usize, Value: Bounded<N, D>> {
-    pub(crate) tail: Vec<slice::Iter<'a, NodeRef<N, D, Value>>>,
-    pub(crate) head: slice::Iter<'a, Value>,
+pub struct Iter<'a, N, const D: usize, Key, Value> {
+    pub(crate) tail: Vec<slice::Iter<'a, NodeRef<N, D, Key, Value>>>,
+    pub(crate) head: slice::Iter<'a, (Key, Value)>,
 }
 
-impl<'a, N, const D: usize, Value: Bounded<N, D>> Iterator for Iter<'a, N, D, Value> {
-    type Item = &'a Value;
+impl<'a, N, const D: usize, Key, Value> Iterator for Iter<'a, N, D, Key, Value> {
+    type Item = &'a (Key, Value);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -39,24 +39,24 @@ impl<'a, N, const D: usize, Value: Bounded<N, D>> Iterator for Iter<'a, N, D, Va
     }
 }
 
-pub struct FilterIter<'a, N: Ord, const D: usize, Value, Filter: SpatialFilter<N, D, Value>> {
+pub struct FilterIter<'a, N: Ord, const D: usize, Key, Value, Filter: SpatialFilter<N, D, Key>> {
     pub(crate) filter: Filter,
-    pub(crate) tail: Vec<slice::Iter<'a, NodeRef<N, D, Value>>>,
-    pub(crate) head: slice::Iter<'a, Value>,
+    pub(crate) tail: Vec<slice::Iter<'a, NodeRef<N, D, Key, Value>>>,
+    pub(crate) head: slice::Iter<'a, (Key, Value)>,
 }
 
-impl<'a, N: Ord, const D: usize, Value: Bounded<N, D>, Filter: SpatialFilter<N, D, Value>> Iterator
-    for FilterIter<'a, N, D, Value, Filter>
+impl<'a, N: Ord, const D: usize, Key: Bounded<N, D>, Value, Filter: SpatialFilter<N, D, Key>> Iterator
+    for FilterIter<'a, N, D, Key, Value, Filter>
 {
-    type Item = &'a Value;
+    type Item = &'a (Key, Value);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(value) = self
+            if let Some(item) = self
                 .head
-                .find(|value| self.filter.test_value(value))
+                .find(|(key, _)| self.filter.test_key(key))
             {
-                return Some(value);
+                return Some(item);
             }
 
             match self.tail.last_mut() {

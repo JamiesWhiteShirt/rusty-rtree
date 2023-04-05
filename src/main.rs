@@ -1,12 +1,14 @@
 mod bounds;
 mod filter;
+mod intersects;
 mod iter;
 mod position;
 mod select;
+mod sphere;
 mod split;
 
 use bounds::{min_bounds, Bounded, Bounds};
-use filter::{SpatialFilter};
+use filter::SpatialFilter;
 use iter::FilterIter;
 use std::{mem::replace, ops::Sub};
 
@@ -14,31 +16,37 @@ fn main() {
     println!("Hello, world!");
 }
 
-pub(crate) struct NodeRef<N, const D: usize, Value> {
+pub(crate) struct NodeRef<N, const D: usize, Key, Value> {
     pub(crate) bounds: Bounds<N, D>,
-    pub(crate) node: Node<N, D, Value>,
+    pub(crate) node: Node<N, D, Key, Value>,
 }
 
-impl<N: Copy, const D: usize, Value: Bounded<N, D>> Bounded<N, D> for NodeRef<N, D, Value> {
+impl<N: Copy, const D: usize, Key: Bounded<N, D>, Value> Bounded<N, D> for NodeRef<N, D, Key, Value> {
     fn bounds(&self) -> Bounds<N, D> {
         self.bounds
     }
 }
 
-pub(crate) enum Node<N, const D: usize, Value> {
-    Inner(Vec<NodeRef<N, D, Value>>),
-    Leaf(Vec<Value>),
+pub(crate) enum Node<N, const D: usize, Key, Value> {
+    Inner(Vec<NodeRef<N, D, Key, Value>>),
+    Leaf(Vec<(Key, Value)>),
 }
 
 // TODO: Make this configurable
 const MAX_CHILDREN: usize = 4;
 const MIN_CHILDREN: usize = 2;
 
-impl<N: Ord + Copy + Sub<Output = N> + Into<f64>, const D: usize, Value: Bounded<N, D>>
-    NodeRef<N, D, Value>
+impl<N: Ord, const D: usize, Key: Bounded<N, D>, Value> Bounded<N, D> for (Key, Value) {
+    fn bounds(&self) -> Bounds<N, D> {
+        self.0.bounds()
+    }
+}
+
+impl<N: Ord + Copy + Sub<Output = N> + Into<f64>, const D: usize, Key: Bounded<N, D>, Value>
+    NodeRef<N, D, Key, Value>
 {
-    pub fn insert(&mut self, value: Value) -> Option<NodeRef<N, D, Value>> {
-        let bounds = value.bounds();
+    pub fn insert(&mut self, key: Key, value: Value) -> Option<NodeRef<N, D, Key, Value>> {
+        let bounds = key.bounds();
         self.bounds = min_bounds(&self.bounds, &bounds);
         match &mut self.node {
             Node::Inner(children) => {
@@ -48,7 +56,7 @@ impl<N: Ord + Copy + Sub<Output = N> + Into<f64>, const D: usize, Value: Bounded
 
                 // TODO: Make selector configurable?
                 let insert_child = select::minimal_volume_increase(children, &bounds).unwrap();
-                if let Some(new_node_ref) = insert_child.insert(value) {
+                if let Some(new_node_ref) = insert_child.insert(key, value) {
                     children.push(new_node_ref);
                     if children.len() <= MAX_CHILDREN {
                         None
@@ -65,7 +73,7 @@ impl<N: Ord + Copy + Sub<Output = N> + Into<f64>, const D: usize, Value: Bounded
                 }
             }
             Node::Leaf(children) => {
-                children.push(value);
+                children.push((key, value));
                 if children.len() <= MAX_CHILDREN {
                     None
                 } else {
@@ -81,15 +89,15 @@ impl<N: Ord + Copy + Sub<Output = N> + Into<f64>, const D: usize, Value: Bounded
     }
 }
 
-pub struct RTree<N, const D: usize, Value: Bounded<N, D>> {
-    root: Option<NodeRef<N, D, Value>>,
-    empty_slice: [Value; 0],
+pub struct RTree<N, const D: usize, Key: Bounded<N, D>, Value> {
+    root: Option<NodeRef<N, D, Key, Value>>,
+    empty_slice: [(Key, Value); 0],
 }
 
-impl<'a, N, const D: usize, Value: Bounded<N, D>> IntoIterator for &'a RTree<N, D, Value> {
-    type Item = &'a Value;
+impl<'a, N, const D: usize, Key: Bounded<N, D>, Value> IntoIterator for &'a RTree<N, D, Key, Value> {
+    type Item = &'a (Key, Value);
 
-    type IntoIter = iter::Iter<'a, N, D, Value>;
+    type IntoIter = iter::Iter<'a, N, D, Key, Value>;
 
     fn into_iter(self) -> Self::IntoIter {
         if let Some(root) = &self.root {
@@ -112,15 +120,15 @@ impl<'a, N, const D: usize, Value: Bounded<N, D>> IntoIterator for &'a RTree<N, 
     }
 }
 
-impl<N: Ord, const D: usize, Value: Bounded<N, D>> RTree<N, D, Value> {
-    pub fn iter<'a>(&'a self) -> iter::Iter<'a, N, D, Value> {
+impl<N: Ord, const D: usize, Key: Bounded<N, D>, Value> RTree<N, D, Key, Value> {
+    pub fn iter<'a>(&'a self) -> iter::Iter<'a, N, D, Key, Value> {
         self.into_iter()
     }
 
-    pub fn filter_iter<'a, Filter: SpatialFilter<N, D, Value>>(
+    pub fn filter_iter<'a, Filter: SpatialFilter<N, D, Key>>(
         &'a self,
         filter: Filter,
-    ) -> FilterIter<'a, N, D, Value, Filter> {
+    ) -> FilterIter<'a, N, D, Key, Value, Filter> {
         if let Some(root) = &self.root {
             match &root.node {
                 Node::Inner(children) => FilterIter {
@@ -143,7 +151,7 @@ impl<N: Ord, const D: usize, Value: Bounded<N, D>> RTree<N, D, Value> {
         }
     }
 
-    pub fn new() -> RTree<N, D, Value> {
+    pub fn new() -> RTree<N, D, Key, Value> {
         return RTree {
             root: None,
             empty_slice: [],
@@ -151,12 +159,12 @@ impl<N: Ord, const D: usize, Value: Bounded<N, D>> RTree<N, D, Value> {
     }
 }
 
-impl<N: Ord + Copy + Sub<Output = N> + Into<f64>, const D: usize, Value: Bounded<N, D>>
-    RTree<N, D, Value>
+impl<N: Ord + Copy + Sub<Output = N> + Into<f64>, const D: usize, Key: Bounded<N, D>, Value>
+    RTree<N, D, Key, Value>
 {
-    pub fn insert(&mut self, value: Value) {
+    pub fn insert(&mut self, key: Key, value: Value) {
         if let Some(root) = &mut self.root {
-            if let Some(new_node_ref) = root.insert(value) {
+            if let Some(new_node_ref) = root.insert(key, value) {
                 // TODO: Is there a better way to do this?
                 let prev_root = replace(
                     root,
@@ -174,8 +182,8 @@ impl<N: Ord + Copy + Sub<Output = N> + Into<f64>, const D: usize, Value: Bounded
             }
         } else {
             self.root = Some(NodeRef {
-                bounds: value.bounds(),
-                node: Node::Leaf(vec![value]),
+                bounds: key.bounds(),
+                node: Node::Leaf(vec![(key, value)]),
             })
         }
     }
@@ -191,79 +199,58 @@ mod tests {
     use noisy_float::types::N32;
 
     use crate::filter::BoundedIntersectionFilter;
-    use crate::filter::Intersectable;
+    use crate::sphere::Sphere;
 
-    use super::bounds::Bounded;
     use super::bounds::Bounds;
     use super::RTree;
 
-    struct Star {
-        id: u32,
-        proper: String,
-        x: N32,
-        y: N32,
-        z: N32,
-    }
-
-    impl Intersectable<Bounds<N32, 3>> for Star {
-        fn intersects(&self, rhs: &Bounds<N32, 3>) -> bool {
-            rhs.contains_point(&[self.x, self.y, self.z])
-        }
-    }
-
-    impl Bounded<N32, 3> for Star {
-        fn bounds(&self) -> Bounds<N32, 3> {
-            return Bounds {
-                min: [self.x, self.y, self.z],
-                max: [self.x, self.y, self.z],
-            };
-        }
-    }
-
     #[test]
     fn insert() {
-        let mut tree = RTree::<i32, 2, Bounds<i32, 2>>::new();
+        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, ()>::new();
 
         tree.insert(Bounds {
             min: [0, 0],
             max: [1, 1],
-        });
+        }, ());
 
         tree.insert(Bounds {
             min: [2, 0],
             max: [3, 1],
-        });
+        }, ());
 
         tree.insert(Bounds {
             min: [0, 2],
             max: [1, 3],
-        });
+        }, ());
 
         tree.insert(Bounds {
             min: [2, 2],
             max: [3, 3],
-        });
+        }, ());
 
         tree.insert(Bounds {
             min: [0, 2],
             max: [0, 2],
-        });
+        }, ());
     }
 
-    fn record_to_star(record: csv::StringRecord) -> Result<Star, Box<dyn Error>> {
+    struct StarInfo {
+        id: u32,
+        proper: String,
+    }
+
+
+    fn record_to_star(record: csv::StringRecord) -> Result<([N32; 3], StarInfo), Box<dyn Error>> {
         let id: u32 = record[0].parse()?;
         let proper: String = record[6].parse()?;
         let x: N32 = n32(record[17].parse()?);
         let y: N32 = n32(record[18].parse()?);
         let z: N32 = n32(record[19].parse()?);
 
-        Ok(Star {
+        Ok(([x, y, z], StarInfo {
             id,
             proper,
-            x,
-            y,
-            z,
-        })
+        }))
     }
 
     #[derive(Debug, Clone)]
@@ -279,32 +266,31 @@ mod tests {
 
     #[test]
     fn cosmic() -> Result<(), Box<dyn Error>> {
-        let mut tree = RTree::<N32, 3, Star>::new();
+        let mut tree = RTree::<N32, 3, [N32; 3], StarInfo>::new();
 
         let file = File::open("./hygdata_v3.csv");
         let mut rdr = csv::Reader::from_reader(file?);
         let mut iter = rdr.records();
 
-        let sol = record_to_star(iter.next().ok_or(Box::new(SolNotFoundError))??)?;
-        let sol_x = sol.x;
-        let sol_y = sol.y;
-        let sol_z = sol.z;
-        tree.insert(sol);
+        let (sol_pos, sol_info) = record_to_star(iter.next().ok_or(Box::new(SolNotFoundError))??)?;
+        tree.insert(sol_pos, sol_info);
 
         for result in iter {
-            tree.insert(record_to_star(result?)?);
+            let (pos, info) = record_to_star(result?)?;
+            tree.insert(pos, info);
         }
 
+        let space: Sphere<N32, 3> = Sphere { center: sol_pos, radius: n32(100.0) };
         let bounds: Bounds<N32, 3> = Bounds {
-            min: [sol_x - 100.0, sol_y - 100.0, sol_z - 100.0],
-            max: [sol_x + 100.0, sol_y + 100.0, sol_z + 100.0],
+            min: sol_pos.map(|coord| coord - 100.0),
+            max: sol_pos.map(|coord| coord + 100.0),
         };
 
-        let filter = BoundedIntersectionFilter::new(bounds);
+        let filter = BoundedIntersectionFilter::new(space);
 
-        for star in tree.filter_iter(filter) {
-            if star.proper.len() > 0 {
-                println!("{}", star.proper);
+        for (_, info) in tree.filter_iter(filter) {
+            if info.proper.len() > 0 {
+                println!("{}", info.proper);
             }
         }
 

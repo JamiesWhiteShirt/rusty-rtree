@@ -59,7 +59,7 @@ fn best_candidate_for_group<
 pub fn quadratic<
     N: Ord + Copy + Sub<Output = N> + Into<f64>,
     const D: usize,
-    Value: Bounded<N, D>,
+    Value: Bounded<N, D>
 >(
     values: &mut Vec<Value>,
 ) -> (Bounds<N, D>, Bounds<N, D>, Vec<Value>) {
