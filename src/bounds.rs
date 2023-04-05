@@ -3,6 +3,8 @@ use std::{cmp, ops::Sub};
 use array_init::from_iter;
 use noisy_float::types::{n64, N64};
 
+use crate::filter::Intersectable;
+
 pub trait Bounded<N, const D: usize> {
     fn bounds(&self) -> Bounds<N, D>;
 }
@@ -40,8 +42,8 @@ impl<N: Copy, const D: usize> Bounded<N, D> for Bounds<N, D> {
     }
 }
 
-impl<N: Ord, const D: usize> Bounds<N, D> {
-    pub fn intersects(&self, rhs: &Self) -> bool {
+impl<N: Ord, const D: usize> Intersectable<Bounds<N, D>> for Bounds<N, D> {
+    fn intersects(&self, rhs: &Bounds<N, D>) -> bool {
         self.min
             .iter()
             .zip(rhs.max.iter())
@@ -52,7 +54,9 @@ impl<N: Ord, const D: usize> Bounds<N, D> {
                 .zip(rhs.min.iter())
                 .all(|(lhs_max, rhs_min)| lhs_max >= rhs_min)
     }
+}
 
+impl<N: Ord, const D: usize> Bounds<N, D> {
     pub fn contains(&self, rhs: &Self) -> bool {
         self.min
             .iter()
@@ -62,6 +66,18 @@ impl<N: Ord, const D: usize> Bounds<N, D> {
                 .max
                 .iter()
                 .zip(rhs.max.iter())
+                .all(|(lhs_max, rhs_max)| lhs_max >= rhs_max)
+    }
+
+    pub fn contains_point(&self, point: &[N; D]) -> bool {
+        self.min
+            .iter()
+            .zip(point.iter())
+            .all(|(lhs_min, rhs_min)| lhs_min <= rhs_min)
+            && self
+                .max
+                .iter()
+                .zip(point.iter())
                 .all(|(lhs_max, rhs_max)| lhs_max >= rhs_max)
     }
 }
@@ -84,6 +100,8 @@ impl<N: Copy + Sub<Output = N> + Into<f64>, const D: usize> Bounds<N, D> {
 
 #[cfg(test)]
 mod tests {
+    use crate::filter::Intersectable;
+
     use super::Bounds;
 
     #[test]

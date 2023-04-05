@@ -1,18 +1,20 @@
 mod bounds;
+mod filter;
 mod iter;
 mod position;
 mod select;
 mod split;
 
 use bounds::{min_bounds, Bounded, Bounds};
-use iter::IntersectionIter;
+use filter::{SpatialFilter};
+use iter::FilterIter;
 use std::{mem::replace, ops::Sub};
 
 fn main() {
     println!("Hello, world!");
 }
 
-pub(crate) struct NodeRef<N, const D: usize, Value: Bounded<N, D>> {
+pub(crate) struct NodeRef<N, const D: usize, Value> {
     pub(crate) bounds: Bounds<N, D>,
     pub(crate) node: Node<N, D, Value>,
 }
@@ -23,7 +25,7 @@ impl<N: Copy, const D: usize, Value: Bounded<N, D>> Bounded<N, D> for NodeRef<N,
     }
 }
 
-pub(crate) enum Node<N, const D: usize, Value: Bounded<N, D>> {
+pub(crate) enum Node<N, const D: usize, Value> {
     Inner(Vec<NodeRef<N, D, Value>>),
     Leaf(Vec<Value>),
 }
@@ -115,26 +117,26 @@ impl<N: Ord, const D: usize, Value: Bounded<N, D>> RTree<N, D, Value> {
         self.into_iter()
     }
 
-    pub fn get_intersecting<'a>(
+    pub fn filter_iter<'a, Filter: SpatialFilter<N, D, Value>>(
         &'a self,
-        bounds: Bounds<N, D>,
-    ) -> IntersectionIter<'a, N, D, Value> {
+        filter: Filter,
+    ) -> FilterIter<'a, N, D, Value, Filter> {
         if let Some(root) = &self.root {
             match &root.node {
-                Node::Inner(children) => IntersectionIter {
-                    bounds,
+                Node::Inner(children) => FilterIter {
+                    filter,
                     tail: vec![children.iter()],
                     head: self.empty_slice.iter(),
                 },
-                Node::Leaf(children) => IntersectionIter {
-                    bounds,
+                Node::Leaf(children) => FilterIter {
+                    filter,
                     tail: Vec::new(),
                     head: children.iter(),
                 },
             }
         } else {
-            IntersectionIter {
-                bounds,
+            FilterIter {
+                filter,
                 tail: Vec::new(),
                 head: self.empty_slice.iter(),
             }
@@ -188,6 +190,9 @@ mod tests {
     use noisy_float::types::n32;
     use noisy_float::types::N32;
 
+    use crate::filter::BoundedIntersectionFilter;
+    use crate::filter::Intersectable;
+
     use super::bounds::Bounded;
     use super::bounds::Bounds;
     use super::RTree;
@@ -198,6 +203,12 @@ mod tests {
         x: N32,
         y: N32,
         z: N32,
+    }
+
+    impl Intersectable<Bounds<N32, 3>> for Star {
+        fn intersects(&self, rhs: &Bounds<N32, 3>) -> bool {
+            rhs.contains_point(&[self.x, self.y, self.z])
+        }
     }
 
     impl Bounded<N32, 3> for Star {
@@ -289,7 +300,9 @@ mod tests {
             max: [sol_x + 100.0, sol_y + 100.0, sol_z + 100.0],
         };
 
-        for star in tree.get_intersecting(bounds) {
+        let filter = BoundedIntersectionFilter::new(bounds);
+
+        for star in tree.filter_iter(filter) {
             if star.proper.len() > 0 {
                 println!("{}", star.proper);
             }
