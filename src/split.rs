@@ -1,13 +1,12 @@
-use std::{
-    iter::repeat,
-    ops::{Mul, Sub},
-};
+use std::{iter::repeat, ops::Sub};
+
+use noisy_float::types::N64;
 
 use crate::bounds::{min_bounds, Bounded, Bounds};
 
 /// Returns a pair of indices (a, b) where a < b. b is therefore also never zero.
 fn worst_combination<
-    N: Ord + Copy + Sub<Output = N> + Mul<Output = N>,
+    N: Ord + Copy + Sub<Output = N> + Into<f64>,
     const D: usize,
     Value: Bounded<N, D>,
 >(
@@ -28,7 +27,7 @@ fn worst_combination<
 /// form the seeds of two groups. The seed of the first group is moved to
 /// values[0], while the seed of the second group is returned.
 fn seed_split_groups<
-    N: Ord + Copy + Sub<Output = N> + Mul<Output = N>,
+    N: Ord + Copy + Sub<Output = N> + Into<f64>,
     const D: usize,
     Value: Bounded<N, D>,
 >(
@@ -40,13 +39,13 @@ fn seed_split_groups<
 }
 
 fn best_candidate_for_group<
-    N: Ord + Copy + Sub<Output = N> + Mul<Output = N>,
+    N: Ord + Copy + Sub<Output = N> + Into<f64>,
     const D: usize,
     Value: Bounded<N, D>,
 >(
     children: &[Value],
     bounds: &Bounds<N, D>,
-) -> Option<(usize, N)> {
+) -> Option<(usize, N64)> {
     children
         .into_iter()
         .enumerate()
@@ -58,7 +57,7 @@ fn best_candidate_for_group<
 /// the first group while the other group is returned along with its minimum
 /// bounds.
 pub fn quadratic<
-    N: Ord + Copy + Sub<Output = N> + Mul<Output = N>,
+    N: Ord + Copy + Sub<Output = N> + Into<f64>,
     const D: usize,
     Value: Bounded<N, D>,
 >(

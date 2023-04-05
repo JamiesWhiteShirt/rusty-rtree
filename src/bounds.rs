@@ -1,9 +1,7 @@
-use std::{
-    cmp,
-    ops::{Mul, Sub},
-};
+use std::{cmp, ops::Sub};
 
 use array_init::from_iter;
+use noisy_float::types::{n64, N64};
 
 pub trait Bounded<N, const D: usize> {
     fn bounds(&self) -> Bounds<N, D>;
@@ -68,8 +66,8 @@ impl<N: Ord, const D: usize> Bounds<N, D> {
     }
 }
 
-impl<N: Copy + Sub<Output = N> + Mul<Output = N>, const D: usize> Bounds<N, D> {
-    pub fn volume(&self) -> N {
+impl<N: Copy + Sub<Output = N> + Into<f64>, const D: usize> Bounds<N, D> {
+    pub fn volume(&self) -> N64 {
         // TODO: Is there a better way to handle this constraint?
         if D == 0 {
             panic!("Cannot calculate volume of bounds with D = 0")
@@ -78,7 +76,7 @@ impl<N: Copy + Sub<Output = N> + Mul<Output = N>, const D: usize> Bounds<N, D> {
         self.min
             .iter()
             .zip(self.max.iter())
-            .map(|(min, max)| *max - *min)
+            .map(|(min, max)| n64((*max - *min).into()))
             .reduce(|acc, length| acc * length)
             .unwrap()
     }

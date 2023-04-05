@@ -1,15 +1,12 @@
-use std::{
-    cmp,
-    mem::replace,
-    ops::{Mul, Sub},
-};
 mod bounds;
 mod iter;
+mod position;
 mod select;
 mod split;
 
 use bounds::{min_bounds, Bounded, Bounds};
 use iter::IntersectionIter;
+use std::{mem::replace, ops::Sub};
 
 fn main() {
     println!("Hello, world!");
@@ -35,7 +32,7 @@ pub(crate) enum Node<N, const D: usize, Value: Bounded<N, D>> {
 const MAX_CHILDREN: usize = 4;
 const MIN_CHILDREN: usize = 2;
 
-impl<N: Ord + Copy + Sub<Output = N> + Mul<Output = N>, const D: usize, Value: Bounded<N, D>>
+impl<N: Ord + Copy + Sub<Output = N> + Into<f64>, const D: usize, Value: Bounded<N, D>>
     NodeRef<N, D, Value>
 {
     pub fn insert(&mut self, value: Value) -> Option<NodeRef<N, D, Value>> {
@@ -87,7 +84,7 @@ pub struct RTree<N, const D: usize, Value: Bounded<N, D>> {
     empty_slice: [Value; 0],
 }
 
-impl<'a, N: Ord, const D: usize, Value: Bounded<N, D>> IntoIterator for &'a RTree<N, D, Value> {
+impl<'a, N, const D: usize, Value: Bounded<N, D>> IntoIterator for &'a RTree<N, D, Value> {
     type Item = &'a Value;
 
     type IntoIter = iter::Iter<'a, N, D, Value>;
@@ -152,7 +149,7 @@ impl<N: Ord, const D: usize, Value: Bounded<N, D>> RTree<N, D, Value> {
     }
 }
 
-impl<N: Ord + Copy + Sub<Output = N> + Mul<Output = N>, const D: usize, Value: Bounded<N, D>>
+impl<N: Ord + Copy + Sub<Output = N> + Into<f64>, const D: usize, Value: Bounded<N, D>>
     RTree<N, D, Value>
 {
     pub fn insert(&mut self, value: Value) {
@@ -184,91 +181,33 @@ impl<N: Ord + Copy + Sub<Output = N> + Mul<Output = N>, const D: usize, Value: B
 
 #[cfg(test)]
 mod tests {
+    use core::fmt;
     use std::error::Error;
     use std::fs::File;
-    use std::ops::Mul;
-    use std::ops::Sub;
 
-    use float_ord::FloatOrd;
+    use noisy_float::types::n32;
+    use noisy_float::types::N32;
 
     use super::bounds::Bounded;
     use super::bounds::Bounds;
     use super::RTree;
 
-    struct F32Ord(pub FloatOrd<f32>);
-
-    impl Mul for F32Ord {
-        type Output = F32Ord;
-
-        fn mul(self, rhs: Self) -> Self::Output {
-            F32Ord(FloatOrd((self.0).0 * (rhs.0).0))
-        }
-    }
-
-    impl Sub for F32Ord {
-        type Output = F32Ord;
-
-        fn sub(self, rhs: Self) -> Self::Output {
-            F32Ord(FloatOrd((self.0).0 - (rhs.0).0))
-        }
-    }
-
     struct Star {
         id: u32,
-        proper: Option<String>,
-        x: f32,
-        y: f32,
-        z: f32,
+        proper: String,
+        x: N32,
+        y: N32,
+        z: N32,
     }
 
-    impl Bounded<F32Ord, 3> for Star {
-        fn bounds(&self) -> Bounds<F32Ord, 3> {
+    impl Bounded<N32, 3> for Star {
+        fn bounds(&self) -> Bounds<N32, 3> {
             return Bounds {
-                min: [
-                    F32Ord(FloatOrd(self.x)),
-                    F32Ord(FloatOrd(self.y)),
-                    F32Ord(FloatOrd(self.z)),
-                ],
-                max: [
-                    F32Ord(FloatOrd(self.x)),
-                    F32Ord(FloatOrd(self.y)),
-                    F32Ord(FloatOrd(self.z)),
-                ],
+                min: [self.x, self.y, self.z],
+                max: [self.x, self.y, self.z],
             };
         }
     }
-
-    /* #[derive(Debug, serde::Deserialize)]
-    struct Star {
-        id: String,
-        hip: Option<String>,
-        hd: Option<String>,
-        hr: Option<String>,
-        gl: Option<String>,
-        bf: Option<String>,
-        proper: Option<String>,
-        ra: f64,
-        dec: f64,
-        dist: f64,
-        pmra: f64,
-        pmdec: f64,
-        rv: Option<f64>,
-        mag: f64,
-        absmag: f64,
-        spect: Option<String>,
-        ci: Option<f64>,
-        x: f64,
-        y: f64,
-        z: f64,
-        vx: f64,
-        vy: f64,
-        vz: f64,
-        rarad: f64,
-        decrad: f64,
-        pmrarad: f64,
-        pmdecrad: f64,
-        // bayer,flam,con,comp,comp_primary,base,lum,var,var_min,var_max
-    } */
 
     #[test]
     fn insert() {
@@ -300,28 +239,59 @@ mod tests {
         });
     }
 
+    fn record_to_star(record: csv::StringRecord) -> Result<Star, Box<dyn Error>> {
+        let id: u32 = record[0].parse()?;
+        let proper: String = record[6].parse()?;
+        let x: N32 = n32(record[17].parse()?);
+        let y: N32 = n32(record[18].parse()?);
+        let z: N32 = n32(record[19].parse()?);
+
+        Ok(Star {
+            id,
+            proper,
+            x,
+            y,
+            z,
+        })
+    }
+
+    #[derive(Debug, Clone)]
+    struct SolNotFoundError;
+
+    impl Error for SolNotFoundError {}
+
+    impl fmt::Display for SolNotFoundError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "Sol not found!")
+        }
+    }
+
     #[test]
-    fn astronomy() -> Result<(), Box<dyn Error>> {
-        let mut tree = RTree::<F32Ord, 3, Star>::new();
+    fn cosmic() -> Result<(), Box<dyn Error>> {
+        let mut tree = RTree::<N32, 3, Star>::new();
 
         let file = File::open("./hygdata_v3.csv");
         let mut rdr = csv::Reader::from_reader(file?);
-        for result in rdr.records() {
-            let record = result?;
-            let id: u32 = record[0].parse()?;
-            let proper: Option<String> = record[6].parse().ok();
-            let x: f32 = record[17].parse()?;
-            let y: f32 = record[18].parse()?;
-            let z: f32 = record[19].parse()?;
+        let mut iter = rdr.records();
 
-            tree.insert(Star {
-                id,
-                proper,
-                x,
-                y,
-                z,
-            });
+        let sol = record_to_star(iter.next().ok_or(Box::new(SolNotFoundError))??)?;
+        tree.insert(sol);
+
+        for result in iter {
+            tree.insert(record_to_star(result?)?);
         }
+
+        let bounds: Bounds<N32, 3> = Bounds {
+            min: [n32(-100.0), n32(-100.0), n32(-100.0)],
+            max: [n32(100.0), n32(100.0), n32(100.0)],
+        };
+
+        for star in tree.get_intersecting(bounds) {
+            if star.proper.len() > 0 {
+                println!("{}", star.proper);
+            }
+        }
+
         Ok(())
     }
 }

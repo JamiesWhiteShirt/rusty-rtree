@@ -9,4 +9,4 @@ edition = "2021"
 array-init = "2.1.0"
 csv = "1.2.1"
 float-ord = "0.3.2"
-serde = { version = "1.0.158", features = ["derive"] }
+noisy_float = "0.2.0"

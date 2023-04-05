@@ -1,19 +1,18 @@
-use std::{
-    cmp::Ordering,
-    ops::{Mul, Sub},
-};
+use std::{cmp::Ordering, ops::Sub};
+
+use noisy_float::types::N64;
 
 use crate::bounds::{min_bounds, Bounded, Bounds};
 
-impl<N: Ord + Copy + Sub<Output = N> + Mul<Output = N>, const D: usize> Bounds<N, D> {
-    fn volume_increase_of_min_bounds(&self, other: &Self) -> N {
+impl<N: Ord + Copy + Sub<Output = N> + Into<f64>, const D: usize> Bounds<N, D> {
+    fn volume_increase_of_min_bounds(&self, other: &Self) -> N64 {
         min_bounds(self, other).volume() - self.volume()
     }
 }
 
 pub fn minimal_volume_increase<
     'a,
-    N: Ord + Copy + Sub<Output = N> + Mul<Output = N>,
+    N: Ord + Copy + Sub<Output = N> + Into<f64>,
     const D: usize,
     Value: Bounded<N, D>,
 >(
@@ -22,16 +21,15 @@ pub fn minimal_volume_increase<
 ) -> Option<&'a mut Value> {
     children.into_iter().min_by(|lhs, rhs| {
         // Optimize for minimal volume increase
-        let cmp = N::partial_cmp(
+        let cmp = N64::cmp(
             &lhs.bounds().volume_increase_of_min_bounds(bounds),
             &rhs.bounds().volume_increase_of_min_bounds(bounds),
         );
-        if cmp == Some(Ordering::Equal) {
+        if cmp == Ordering::Equal {
             // If the volume increase is the same, select the child with the smallest volume to start with
-            N::partial_cmp(&lhs.bounds().volume(), &rhs.bounds().volume())
+            N64::cmp(&lhs.bounds().volume(), &rhs.bounds().volume())
         } else {
             cmp
         }
-        .unwrap_or(Ordering::Greater)
     })
 }
