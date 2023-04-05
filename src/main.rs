@@ -122,26 +122,26 @@ impl<N: Ord, const D: usize, Value: Bounded<N, D>> RTree<N, D, Value> {
         if let Some(root) = &self.root {
             match &root.node {
                 Node::Inner(children) => IntersectionIter {
-                    bounds: bounds,
+                    bounds,
                     tail: vec![children.iter()],
                     head: self.empty_slice.iter(),
                 },
                 Node::Leaf(children) => IntersectionIter {
-                    bounds: bounds,
+                    bounds,
                     tail: Vec::new(),
                     head: children.iter(),
                 },
             }
         } else {
             IntersectionIter {
-                bounds: bounds,
+                bounds,
                 tail: Vec::new(),
                 head: self.empty_slice.iter(),
             }
         }
     }
 
-    fn new() -> RTree<N, D, Value> {
+    pub fn new() -> RTree<N, D, Value> {
         return RTree {
             root: None,
             empty_slice: [],
@@ -275,6 +275,9 @@ mod tests {
         let mut iter = rdr.records();
 
         let sol = record_to_star(iter.next().ok_or(Box::new(SolNotFoundError))??)?;
+        let sol_x = sol.x;
+        let sol_y = sol.y;
+        let sol_z = sol.z;
         tree.insert(sol);
 
         for result in iter {
@@ -282,8 +285,8 @@ mod tests {
         }
 
         let bounds: Bounds<N32, 3> = Bounds {
-            min: [n32(-100.0), n32(-100.0), n32(-100.0)],
-            max: [n32(100.0), n32(100.0), n32(100.0)],
+            min: [sol_x - 100.0, sol_y - 100.0, sol_z - 100.0],
+            max: [sol_x + 100.0, sol_y + 100.0, sol_z + 100.0],
         };
 
         for star in tree.get_intersecting(bounds) {

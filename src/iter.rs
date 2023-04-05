@@ -30,6 +30,11 @@ impl<'a, N, const D: usize, Value: Bounded<N, D>> Iterator for Iter<'a, N, D, Va
                 }
                 None => return Option::None,
             }
+
+            // Clean up by removing empty iterators from the tail
+            while self.tail.last().map(|tail_iter| tail_iter.len()) == Some(0) {
+                self.tail.pop();
+            }
         }
     }
 }
@@ -55,15 +60,20 @@ impl<'a, N: Ord, const D: usize, Value: Bounded<N, D>> Iterator
             }
 
             match self.tail.last_mut() {
-                Some(node) => {
-                    if let Some(entry) = node.find(|entry| entry.bounds.intersects(&self.bounds)) {
-                        match &entry.node {
+                Some(tail_iter) => {
+                    if let Some(intersecting) = tail_iter.find(|entry| entry.bounds.intersects(&self.bounds)) {
+                        match &intersecting.node {
                             Node::Inner(entries) => self.tail.push(entries.iter()),
                             Node::Leaf(entries) => self.head = entries.iter(),
                         }
                     }
                 }
                 None => return Option::None,
+            }
+
+            // Clean up by removing empty iterators from the tail
+            while self.tail.last().map(|tail_iter| tail_iter.len()) == Some(0) {
+                self.tail.pop();
             }
         }
     }
