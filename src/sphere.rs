@@ -1,32 +1,35 @@
-use std::ops::{Sub, Add};
+use std::ops::{Add, Sub};
 
-use crate::{intersects::Intersects, bounds::{Bounded, Bounds}};
+use crate::{
+    bounds::{Bounded, Bounds},
+    intersects::Intersects,
+    vector::Vector,
+};
 
 pub struct Sphere<N, const D: usize> {
-    pub center: [N; D],
+    pub center: Vector<N, D>,
     pub radius: N,
 }
 
-impl<N: Copy + Sub<Output = N> + Add<Output = N>, const D: usize> Bounded<N, D> for Sphere<N, D> {
+impl<N, const D: usize> Bounded<N, D> for Sphere<N, D>
+where
+    N: Clone + Sub<Output = N> + Add<Output = N>,
+{
     fn bounds(&self) -> Bounds<N, D> {
         Bounds {
-            min: self.center.map(|coord| coord - self.radius),
-            max: self.center.map(|coord| coord + self.radius),
+            min: self.center.map(|coord| coord - self.radius.clone()),
+            max: self.center.map(|coord| coord + self.radius.clone()),
         }
     }
 }
 
-impl<N: Copy + Sub<Output = N> + Into<f64>, const D: usize> Intersects<[N; D]> for Sphere<N, D> {
-    fn intersects(&self, rhs: &[N; D]) -> bool {
-        let sq_dist = self.center
-            .iter()
-            .zip(rhs.iter())
-            .map(|(center_coord, pos_coord)| {
-                let comp_dist = (*pos_coord - *center_coord).into();
-                comp_dist * comp_dist
-            })
-            .reduce(|acc, length| acc * length)
-            .unwrap();
-        sq_dist <= self.radius.into() * self.radius.into()
+impl<N, const D: usize> Intersects<Vector<N, D>> for Sphere<N, D>
+where
+    N: Clone + Sub<Output = N> + Into<f64>,
+{
+    fn intersects(&self, rhs: &Vector<N, D>) -> bool {
+        let delta: Vector<f64, D> = (rhs.clone() - self.center.clone()).into_map(|n| n.into());
+        let radius: f64 = (self.radius.clone()).into();
+        delta.sq_mag() <= radius * radius
     }
 }

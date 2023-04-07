@@ -1,9 +1,6 @@
 use std::slice;
 
-use crate::{
-    bounds::{Bounded},
-    Node, NodeRef, filter::{SpatialFilter},
-};
+use crate::{bounds::Bounded, filter::SpatialFilter, Node, NodeRef};
 
 pub struct Iter<'a, N, const D: usize, Key, Value> {
     pub(crate) tail: Vec<slice::Iter<'a, NodeRef<N, D, Key, Value>>>,
@@ -39,29 +36,32 @@ impl<'a, N, const D: usize, Key, Value> Iterator for Iter<'a, N, D, Key, Value> 
     }
 }
 
-pub struct FilterIter<'a, N: Ord, const D: usize, Key, Value, Filter: SpatialFilter<N, D, Key>> {
+pub struct FilterIter<'a, N, const D: usize, Key, Value, Filter> {
     pub(crate) filter: Filter,
     pub(crate) tail: Vec<slice::Iter<'a, NodeRef<N, D, Key, Value>>>,
     pub(crate) head: slice::Iter<'a, (Key, Value)>,
 }
 
-impl<'a, N: Ord, const D: usize, Key: Bounded<N, D>, Value, Filter: SpatialFilter<N, D, Key>> Iterator
+impl<'a, N, const D: usize, Key, Value, Filter> Iterator
     for FilterIter<'a, N, D, Key, Value, Filter>
+where
+    N: Ord,
+    Key: Bounded<N, D>,
+    Filter: SpatialFilter<N, D, Key>,
 {
     type Item = &'a (Key, Value);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(item) = self
-                .head
-                .find(|(key, _)| self.filter.test_key(key))
-            {
+            if let Some(item) = self.head.find(|(key, _)| self.filter.test_key(key)) {
                 return Some(item);
             }
 
             match self.tail.last_mut() {
                 Some(tail_iter) => {
-                    if let Some(intersecting) = tail_iter.find(|entry| self.filter.test_bounds(&entry.bounds)) {
+                    if let Some(intersecting) =
+                        tail_iter.find(|entry| self.filter.test_bounds(&entry.bounds))
+                    {
                         match &intersecting.node {
                             Node::Inner(entries) => self.tail.push(entries.iter()),
                             Node::Leaf(entries) => self.head = entries.iter(),

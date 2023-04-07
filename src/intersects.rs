@@ -1,3 +1,58 @@
+use std::ops::Sub;
+
+use crate::{bounds::Bounds, vector::Vector};
+
 pub trait Intersects<T> {
     fn intersects(&self, rhs: &T) -> bool;
+}
+
+fn f64_min(lhs: f64, rhs: f64) -> f64 {
+    if lhs < rhs {
+        lhs
+    } else {
+        rhs
+    }
+}
+
+fn f64_max(lhs: f64, rhs: f64) -> f64 {
+    if lhs > rhs {
+        rhs
+    } else {
+        lhs
+    }
+}
+
+/// https://tavianator.com/2022/ray_box_boundary.html
+///
+/// NOTE: Although the source material does not mention it, it is not required
+/// for the ray normal to have a magnitude of 1. This implementation substitutes
+/// the normal for a delta value with unconstrained magnitude.
+///
+/// This is equivalent because in all comparisons, both operands are inversely
+/// scaled with the magnitude of the delta.
+pub(crate) fn ray_bounds_intersect<N, const D: usize>(
+    b: &Bounds<N, D>,
+    origin: &Vector<N, D>,
+    delta: &Vector<N, D>,
+) -> bool
+where
+    N: Clone + Sub<Output = N> + Into<f64>,
+{
+    let n_inv = 1.0 / (delta[0].clone()).into();
+    let t1 = (b.min[0].clone() - origin[0].clone()).into() * n_inv;
+    let t2 = (b.max[0].clone() - origin[0].clone()).into() * n_inv;
+
+    let mut tmin = f64_min(t1, t2);
+    let mut tmax = f64_max(t1, t2);
+
+    for dim in 1..D {
+        let n_inv = 1.0 / (delta[dim].clone()).into();
+        let t1 = (b.min[dim].clone() - origin[dim].clone()).into() * n_inv;
+        let t2 = (b.max[dim].clone() - origin[dim].clone()).into() * n_inv;
+
+        tmin = f64_min(f64_max(t1, tmin), f64_max(t2, tmin));
+        tmax = f64_max(f64_min(t1, tmax), f64_min(t2, tmax));
+    }
+
+    return tmin < tmax;
 }

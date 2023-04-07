@@ -1,9 +1,12 @@
-use std::{cmp, ops::Sub};
+use std::{
+    cmp,
+    ops::{Index, Sub},
+};
 
 use array_init::from_iter;
 use noisy_float::types::{n64, N64};
 
-use crate::intersects::Intersects;
+use crate::{intersects::Intersects, line::Line, ray::Ray, vector::Vector};
 
 pub trait Bounded<N, const D: usize> {
     fn bounds(&self) -> Bounds<N, D>;
@@ -11,84 +14,113 @@ pub trait Bounded<N, const D: usize> {
 
 #[derive(Clone, Copy)]
 pub struct Bounds<N, const D: usize> {
-    pub min: [N; D],
-    pub max: [N; D],
+    pub min: Vector<N, D>,
+    pub max: Vector<N, D>,
 }
 
-pub fn min_bounds<N: Ord + Copy, const D: usize>(
-    lhs: &Bounds<N, D>,
-    rhs: &Bounds<N, D>,
-) -> Bounds<N, D> {
-    let min = from_iter(
-        lhs.min
-            .into_iter()
-            .zip(rhs.min)
-            .map(|(lhs, rhs)| cmp::min(lhs, rhs)),
-    )
-    .unwrap();
-    let max = from_iter(
-        lhs.max
-            .into_iter()
-            .zip(rhs.max)
-            .map(|(lhs, rhs)| cmp::max(lhs, rhs)),
-    )
-    .unwrap();
+pub fn min_bounds<N, const D: usize>(lhs: &Bounds<N, D>, rhs: &Bounds<N, D>) -> Bounds<N, D>
+where
+    N: Ord + Clone,
+{
+    let min = Vector(
+        from_iter(
+            lhs.min
+                .zip(&rhs.min)
+                .map(|(lhs, rhs)| cmp::min(lhs, rhs).clone()),
+        )
+        .unwrap(),
+    );
+    let max = Vector(
+        from_iter(
+            lhs.max
+                .zip(&rhs.max)
+                .map(|(lhs, rhs)| cmp::max(lhs, rhs).clone()),
+        )
+        .unwrap(),
+    );
     Bounds { min, max }
 }
 
-impl<N: Copy, const D: usize> Bounded<N, D> for Bounds<N, D> {
+impl<N, const D: usize> Bounded<N, D> for Bounds<N, D>
+where
+    N: Clone,
+{
     fn bounds(&self) -> Bounds<N, D> {
-        *self
+        self.clone()
     }
 }
 
-impl<N: Ord, const D: usize> Intersects<Bounds<N, D>> for Bounds<N, D> {
+impl<N, const D: usize> Intersects<Bounds<N, D>> for Bounds<N, D>
+where
+    N: Ord,
+{
     fn intersects(&self, rhs: &Bounds<N, D>) -> bool {
         self.min
-            .iter()
-            .zip(rhs.max.iter())
+            .zip(&rhs.max)
             .all(|(lhs_min, rhs_max)| lhs_min <= rhs_max)
             && self
                 .max
-                .iter()
-                .zip(rhs.min.iter())
+                .zip(&rhs.min)
                 .all(|(lhs_max, rhs_min)| lhs_max >= rhs_min)
     }
 }
 
-impl<N: Ord, const D: usize> Intersects<[N; D]> for Bounds<N, D> {
-    fn intersects(&self, rhs: &[N; D]) -> bool {
+impl<N, const D: usize> Intersects<Vector<N, D>> for Bounds<N, D>
+where
+    N: Ord,
+{
+    fn intersects(&self, rhs: &Vector<N, D>) -> bool {
         self.min
-            .iter()
-            .zip(rhs.iter())
+            .zip(rhs)
             .all(|(lhs_min, rhs_min)| lhs_min <= rhs_min)
             && self
                 .max
-                .iter()
-                .zip(rhs.iter())
+                .zip(rhs)
                 .all(|(lhs_max, rhs_max)| lhs_max >= rhs_max)
     }
 }
 
-impl<N: Ord, const D: usize> Bounds<N, D> {
+impl<N, const D: usize> Intersects<Ray<N, D>> for Bounds<N, D>
+where
+    N: Clone + Sub<Output = N> + Into<f64>,
+{
+    fn intersects(&self, rhs: &Ray<N, D>) -> bool {
+        rhs.intersects(self)
+    }
+}
+
+impl<N, const D: usize> Intersects<Line<N, D>> for Bounds<N, D>
+where
+    N: Ord + Clone + Sub<Output = N> + Into<f64>,
+{
+    fn intersects(&self, rhs: &Line<N, D>) -> bool {
+        rhs.intersects(self)
+    }
+}
+
+impl<N, const D: usize> Bounds<N, D>
+where
+    N: Ord,
+{
     pub fn contains(&self, rhs: &Self) -> bool {
         self.min
-            .iter()
-            .zip(rhs.min.iter())
+            .zip(&rhs.min)
             .all(|(lhs_min, rhs_min)| lhs_min <= rhs_min)
             && self
                 .max
-                .iter()
-                .zip(rhs.max.iter())
+                .zip(&rhs.max)
                 .all(|(lhs_max, rhs_max)| lhs_max >= rhs_max)
     }
 
-    pub fn contains_point(&self, point: &[N; D]) -> bool {
+    pub fn contains_vector(&self, point: &Vector<N, D>) -> bool {
         self.intersects(point)
     }
 }
 
-impl<N: Copy + Sub<Output = N> + Into<f64>, const D: usize> Bounds<N, D> {
+impl<N, const D: usize> Bounds<N, D>
+where
+    N: Clone + Sub<Output = N> + Into<f64>,
+{
     pub fn volume(&self) -> N64 {
         // TODO: Is there a better way to handle this constraint?
         if D == 0 {
@@ -96,30 +128,37 @@ impl<N: Copy + Sub<Output = N> + Into<f64>, const D: usize> Bounds<N, D> {
         }
 
         self.min
-            .iter()
-            .zip(self.max.iter())
-            .map(|(min, max)| n64((*max - *min).into()))
+            .zip(&self.max)
+            .map(|(min, max)| n64((max.clone() - min.clone()).into()))
             .reduce(|acc, length| acc * length)
             .unwrap()
     }
 }
 
+impl<N, const D: usize> Index<usize> for Bounds<N, D> {
+    type Output = Vector<N, D>;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        [&self.min, &self.max][index]
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::intersects::Intersects;
+    use crate::{intersects::Intersects, vector::Vector};
 
     use super::Bounds;
 
     #[test]
     fn test_intersects() {
         let a: Bounds<i32, 2> = Bounds {
-            min: [0, 0],
-            max: [2, 2],
+            min: Vector([0, 0]),
+            max: Vector([2, 2]),
         };
 
         let b: Bounds<i32, 2> = Bounds {
-            min: [1, 1],
-            max: [3, 3],
+            min: Vector([1, 1]),
+            max: Vector([3, 3]),
         };
 
         assert_eq!(a.intersects(&b), true);
