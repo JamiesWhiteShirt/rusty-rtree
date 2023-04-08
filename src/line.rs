@@ -4,7 +4,7 @@ use array_init::from_iter;
 
 use crate::{
     bounds::{Bounded, Bounds},
-    intersects::{ray_bounds_intersect, Intersects},
+    intersects::{line_bounds_intersect, Intersects},
     vector::Vector,
 };
 
@@ -57,27 +57,6 @@ where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
 {
     fn intersects(&self, rhs: &Bounds<N, D>) -> bool {
-        let mut contained = true;
-        // First test that the bounds of the line intersect with the bounds
-        for dim in 0..D {
-            let dim_min = cmp::min(self.0[dim].clone(), self.1[dim].clone());
-            let dim_max = cmp::max(self.0[dim].clone(), self.1[dim].clone());
-            if dim_min > rhs.max[dim] || dim_max < rhs.min[dim] {
-                return false;
-            }
-
-            if dim_min < rhs.min[dim] || dim_max > rhs.max[dim] {
-                contained = false;
-            }
-        }
-
-        // The line is fully contained by the bounds
-        if contained {
-            return true;
-        }
-
-        // If the bounds intersect, the line intersects iff the ray passing
-        // through the line also intersects with the bounds
-        ray_bounds_intersect(rhs, &self.0, &self.delta())
+        line_bounds_intersect(rhs, &self.0, &self.delta())
     }
 }

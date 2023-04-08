@@ -16,9 +16,9 @@ fn f64_min(lhs: f64, rhs: f64) -> f64 {
 
 fn f64_max(lhs: f64, rhs: f64) -> f64 {
     if lhs > rhs {
-        rhs
-    } else {
         lhs
+    } else {
+        rhs
     }
 }
 
@@ -55,4 +55,59 @@ where
     }
 
     return tmin < tmax;
+}
+
+pub(crate) fn line_bounds_intersect<N, const D: usize>(
+    b: &Bounds<N, D>,
+    origin: &Vector<N, D>,
+    delta: &Vector<N, D>,
+) -> bool
+where
+    N: Clone + Sub<Output = N> + Into<f64>,
+{
+    let mut tmin: f64 = 0.0;
+    let mut tmax: f64 = 1.0;
+
+    for dim in 0..D {
+        let n_inv = 1.0 / (delta[dim].clone()).into();
+        let t1 = (b.min[dim].clone() - origin[dim].clone()).into() * n_inv;
+        let t2 = (b.max[dim].clone() - origin[dim].clone()).into() * n_inv;
+
+        tmin = f64_min(f64_max(t1, tmin), f64_max(t2, tmin));
+        tmax = f64_max(f64_min(t1, tmax), f64_min(t2, tmax));
+    }
+
+    return tmin <= tmax;
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{bounds::Bounds, intersects::line_bounds_intersect, vector::Vector};
+
+    #[test]
+    fn test_line_bounds_intersect() {
+        let bounds: Bounds<i32, 2> = Bounds {
+            min: Vector([0, 0]),
+            max: Vector([5, 5]),
+        };
+        let origin = Vector([6, 0]);
+        let delta = Vector([-5, 5]);
+
+        assert!(line_bounds_intersect(&bounds, &origin, &delta));
+    }
+
+    #[test]
+    fn test_line_bounds_not_intersect() {
+        let bounds: Bounds<i32, 2> = Bounds {
+            min: Vector([0, 0]),
+            max: Vector([4, 4]),
+        };
+        let origin = Vector([-2, 3]);
+        let delta = Vector([4, 4]);
+        assert!(!line_bounds_intersect(&bounds, &origin, &delta));
+
+        let origin = Vector([5, 2]);
+        let delta = Vector([4, 0]);
+        assert!(!line_bounds_intersect(&bounds, &origin, &delta));
+    }
 }
