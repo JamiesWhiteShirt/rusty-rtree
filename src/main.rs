@@ -1,3 +1,5 @@
+#![feature(test)]
+
 mod bounds;
 mod filter;
 mod intersects;
@@ -38,9 +40,7 @@ pub(crate) enum Node<N, const D: usize, Key, Value> {
     Leaf(Vec<(Key, Value)>),
 }
 
-// TODO: Make this configurable
-const MAX_CHILDREN: usize = 4;
-const MIN_CHILDREN: usize = 2;
+const PREALLOCATE_CHILDREN: bool = true;
 
 impl<N, const D: usize, Key, Value> Bounded<N, D> for (Key, Value)
 where
@@ -57,7 +57,12 @@ where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
     Key: Bounded<N, D>,
 {
-    pub fn insert(&mut self, key: Key, value: Value) -> Option<NodeRef<N, D, Key, Value>> {
+    pub fn insert(
+        &mut self,
+        max_children: usize,
+        key: Key,
+        value: Value,
+    ) -> Option<NodeRef<N, D, Key, Value>> {
         let bounds = key.bounds();
         self.bounds = min_bounds(&self.bounds, &bounds);
         match &mut self.node {
@@ -68,12 +73,13 @@ where
 
                 // TODO: Make selector configurable?
                 let insert_child = select::minimal_volume_increase(children, &bounds).unwrap();
-                if let Some(new_node_ref) = insert_child.insert(key, value) {
+                if let Some(new_node_ref) = insert_child.insert(max_children, key, value) {
                     children.push(new_node_ref);
-                    if children.len() <= MAX_CHILDREN {
+                    if children.len() <= max_children {
                         None
                     } else {
-                        let (self_bounds, new_bounds, new_children) = split::quadratic(children);
+                        let (self_bounds, new_bounds, new_children) =
+                            split::quadratic(max_children, children);
                         self.bounds = self_bounds;
                         Some(NodeRef {
                             bounds: new_bounds,
@@ -86,10 +92,11 @@ where
             }
             Node::Leaf(children) => {
                 children.push((key, value));
-                if children.len() <= MAX_CHILDREN {
+                if children.len() <= max_children {
                     None
                 } else {
-                    let (self_bounds, new_bounds, new_children) = split::quadratic(children);
+                    let (self_bounds, new_bounds, new_children) =
+                        split::quadratic(max_children, children);
                     self.bounds = self_bounds;
                     Some(NodeRef {
                         bounds: new_bounds,
@@ -101,7 +108,13 @@ where
     }
 }
 
+pub struct Config {
+    pub max_children: usize,
+    pub min_children: usize,
+}
+
 pub struct RTree<N, const D: usize, Key, Value> {
+    config: Config,
     root: Option<NodeRef<N, D, Key, Value>>,
     empty_slice: [(Key, Value); 0],
 }
@@ -170,8 +183,9 @@ where
         }
     }
 
-    pub fn new() -> RTree<N, D, Key, Value> {
+    pub fn new(config: Config) -> RTree<N, D, Key, Value> {
         return RTree {
+            config,
             root: None,
             empty_slice: [],
         };
@@ -185,7 +199,7 @@ where
 {
     pub fn insert(&mut self, key: Key, value: Value) {
         if let Some(root) = &mut self.root {
-            if let Some(new_node_ref) = root.insert(key, value) {
+            if let Some(new_node_ref) = root.insert(self.config.max_children, key, value) {
                 // TODO: Is there a better way to do this?
                 let prev_root = replace(
                     root,
@@ -202,9 +216,17 @@ where
                 }
             }
         } else {
+            let bounds = key.bounds();
+            let children = if PREALLOCATE_CHILDREN {
+                let mut children = Vec::with_capacity(self.config.max_children);
+                children.push((key, value));
+                children
+            } else {
+                vec![(key, value)]
+            };
             self.root = Some(NodeRef {
-                bounds: key.bounds(),
-                node: Node::Leaf(vec![(key, value)]),
+                bounds,
+                node: Node::Leaf(children),
             })
         }
     }
@@ -215,6 +237,11 @@ mod tests {
     use core::fmt;
     use std::error::Error;
     use std::fs::File;
+    extern crate test;
+    use rand::rngs::StdRng;
+    use rand::Rng;
+    use rand::SeedableRng;
+    use test::{black_box, Bencher};
 
     use noisy_float::types::n32;
     use noisy_float::types::N32;
@@ -223,13 +250,17 @@ mod tests {
     use crate::line::Line;
     use crate::sphere::Sphere;
     use crate::vector::Vector;
+    use crate::Config;
 
     use super::bounds::Bounds;
     use super::RTree;
 
     #[test]
     fn insert() {
-        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, ()>::new();
+        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, ()>::new(Config {
+            max_children: 4,
+            min_children: 2,
+        });
 
         tree.insert(
             Bounds {
@@ -272,6 +303,60 @@ mod tests {
         );
     }
 
+    #[bench]
+    fn insert_bench(bencher: &mut Bencher) {
+        // PREALLOCATE_CHILDREN = true
+        // test tests::insert_bench ... bench:     376,968 ns/iter (+/- 13,641)
+        // PREALLOCATE_CHILDREN = false
+        // test tests::insert_bench ... bench:     450,682 ns/iter (+/- 15,574)
+
+        bencher.iter(|| {
+            let mut rng = StdRng::from_seed([
+                0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD,
+                0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
+                0xDE, 0xAD, 0xBE, 0xEF,
+            ]);
+
+            let mut tree = RTree::<i32, 2, Bounds<i32, 2>, i32>::new(Config {
+                max_children: 4,
+                min_children: 2,
+            });
+            for i in 0..1000 {
+                let min = Vector([rng.gen_range(0..100), rng.gen_range(0..100)]);
+                let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
+                tree.insert(Bounds { min, max }, i);
+            }
+            tree
+        });
+    }
+
+    #[bench]
+    fn query_bench(bencher: &mut Bencher) {
+        let mut rng = StdRng::from_seed([
+            0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD,
+            0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
+            0xDE, 0xAD, 0xBE, 0xEF,
+        ]);
+        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, i32>::new(Config {
+            max_children: 4,
+            min_children: 2,
+        });
+        for i in 0..1000 {
+            let min = Vector([rng.gen_range(0..100), rng.gen_range(0..100)]);
+            let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
+            tree.insert(Bounds { min, max }, i);
+        }
+
+        bencher.iter(|| {
+            for entry in tree.filter_iter(BoundedIntersectionFilter::new(Bounds {
+                min: Vector([0, 0]),
+                max: Vector([1000, 1000]),
+            })) {
+                black_box(entry);
+            }
+        });
+    }
+
     struct StarInfo {
         id: u32,
         proper: String,
@@ -302,7 +387,10 @@ mod tests {
 
     #[test]
     fn cosmic() -> Result<(), Box<dyn Error>> {
-        let mut stars = RTree::<N32, 3, Vector<N32, 3>, StarInfo>::new();
+        let mut stars = RTree::<N32, 3, Vector<N32, 3>, StarInfo>::new(Config {
+            min_children: 4,
+            max_children: 2,
+        });
 
         let file = File::open("./hygdata_v3.csv");
         let mut rdr = csv::Reader::from_reader(file?);
@@ -325,7 +413,10 @@ mod tests {
             max: sol_pos.into_map(|coord| coord + 100.0),
         };
 
-        let mut star_lines = RTree::<N32, 3, Line<N32, 3>, ()>::new();
+        let mut star_lines = RTree::<N32, 3, Line<N32, 3>, ()>::new(Config {
+            min_children: 4,
+            max_children: 2,
+        });
 
         for (pos, info) in stars.filter_iter(BoundedIntersectionFilter::new(space)) {
             if info.proper.len() > 0 {
