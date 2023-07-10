@@ -296,58 +296,94 @@ mod tests {
         );
     }
 
-    #[bench]
-    fn insert_bench(bencher: &mut Bencher) {
-        // PREALLOCATE_CHILDREN = true
-        // test tests::insert_bench ... bench:     376,968 ns/iter (+/- 13,641)
-        // PREALLOCATE_CHILDREN = false
-        // test tests::insert_bench ... bench:     450,682 ns/iter (+/- 15,574)
+    fn do_insert_bench(bencher: &mut Bencher, max_children: usize) {
+        let min_children = max_children / 2;
+        let mut rng = StdRng::from_seed([
+            0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD,
+            0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
+            0xDE, 0xAD, 0xBE, 0xEF,
+        ]);
+
+        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, i32>::new(Config {
+            max_children,
+            min_children,
+        });
+        for i in 0..10000 {
+            let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
+            let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
+            tree.insert(Bounds { min, max }, i);
+        }
 
         bencher.iter(|| {
-            let mut rng = StdRng::from_seed([
-                0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD,
-                0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
-                0xDE, 0xAD, 0xBE, 0xEF,
-            ]);
-
-            let mut tree = RTree::<i32, 2, Bounds<i32, 2>, i32>::new(Config {
-                max_children: 4,
-                min_children: 2,
-            });
-            for i in 0..1000 {
-                let min = Vector([rng.gen_range(0..100), rng.gen_range(0..100)]);
-                let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
-                tree.insert(Bounds { min, max }, i);
-            }
-            tree
+            let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
+            let max = min + Vector([10, 10]);
+            tree.insert(Bounds { min, max }, 0)
         });
     }
 
     #[bench]
-    fn query_bench(bencher: &mut Bencher) {
+    fn insert_bench_4(bencher: &mut Bencher) {
+        do_insert_bench(bencher, 4);
+    }
+
+    #[bench]
+    fn insert_bench_8(bencher: &mut Bencher) {
+        do_insert_bench(bencher, 8);
+    }
+
+    #[bench]
+    fn insert_bench_16(bencher: &mut Bencher) {
+        do_insert_bench(bencher, 16);
+    }
+
+    #[bench]
+    fn insert_bench_32(bencher: &mut Bencher) {
+        do_insert_bench(bencher, 32);
+    }
+
+    #[bench]
+    fn insert_bench_64(bencher: &mut Bencher) {
+        do_insert_bench(bencher, 64);
+    }
+
+    #[bench]
+    fn insert_bench_128(bencher: &mut Bencher) {
+        do_insert_bench(bencher, 128);
+    }
+
+    #[bench]
+    fn insert_bench_256(bencher: &mut Bencher) {
+        do_insert_bench(bencher, 256);
+    }
+
+    fn do_query_bench(bencher: &mut Bencher, max_children: usize) {
         let mut rng = StdRng::from_seed([
             0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD,
             0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
             0xDE, 0xAD, 0xBE, 0xEF,
         ]);
         let mut tree = RTree::<i32, 2, Bounds<i32, 2>, i32>::new(Config {
-            max_children: 4,
-            min_children: 2,
+            max_children,
+            min_children: max_children / 2,
         });
-        for i in 0..1000 {
-            let min = Vector([rng.gen_range(0..100), rng.gen_range(0..100)]);
+        for i in 0..10000 {
+            let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
             let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
             tree.insert(Bounds { min, max }, i);
         }
 
         bencher.iter(|| {
-            for entry in tree.filter_iter(BoundedIntersectionFilter::new(Bounds {
-                min: Vector([0, 0]),
-                max: Vector([1000, 1000]),
-            })) {
+            let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
+            let max = min + Vector([10, 10]);
+            for entry in tree.filter_iter(BoundedIntersectionFilter::new(Bounds { min, max })) {
                 black_box(entry);
             }
         });
+    }
+
+    #[bench]
+    fn query_bench_64(bencher: &mut Bencher) {
+        do_query_bench(bencher, 64);
     }
 
     struct StarInfo {
