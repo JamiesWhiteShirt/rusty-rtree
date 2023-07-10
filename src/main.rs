@@ -40,8 +40,6 @@ pub(crate) enum Node<N, const D: usize, Key, Value> {
     Leaf(Vec<(Key, Value)>),
 }
 
-const PREALLOCATE_CHILDREN: bool = true;
-
 impl<N, const D: usize, Key, Value> Bounded<N, D> for (Key, Value)
 where
     N: Ord,
@@ -217,13 +215,8 @@ where
             }
         } else {
             let bounds = key.bounds();
-            let children = if PREALLOCATE_CHILDREN {
-                let mut children = Vec::with_capacity(self.config.max_children);
-                children.push((key, value));
-                children
-            } else {
-                vec![(key, value)]
-            };
+            let mut children = Vec::with_capacity(self.config.max_children);
+            children.push((key, value));
             self.root = Some(NodeRef {
                 bounds,
                 node: Node::Leaf(children),

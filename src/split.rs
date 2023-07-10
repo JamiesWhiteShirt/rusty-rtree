@@ -2,10 +2,7 @@ use std::{iter::repeat, ops::Sub};
 
 use noisy_float::types::N64;
 
-use crate::{
-    bounds::{min_bounds, Bounded, Bounds},
-    PREALLOCATE_CHILDREN,
-};
+use crate::bounds::{min_bounds, Bounded, Bounds};
 
 /// Returns a pair of indices (a, b) where a < b. b is therefore also never zero.
 fn worst_combination<N, const D: usize, Value>(children: &[Value]) -> (usize, usize)
@@ -69,13 +66,8 @@ where
 
     let min_group_size = values.len() / 2;
 
-    let mut group_2 = if PREALLOCATE_CHILDREN {
-        let mut group_2 = Vec::with_capacity(max_children);
-        group_2.push(seed_split_groups(values));
-        group_2
-    } else {
-        vec![seed_split_groups(values)]
-    };
+    let mut group_2 = Vec::with_capacity(max_children);
+    group_2.push(seed_split_groups(values));
     let (mut bounds_1, mut bounds_2) = (values[0].bounds(), group_2[0].bounds());
 
     let mut group_1_len = 1;
