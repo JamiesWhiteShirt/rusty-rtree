@@ -15,7 +15,10 @@ use bounds::{min_bounds, min_bounds_all, Bounded, Bounds};
 use filter::SpatialFilter;
 use intersects::Intersects;
 use iter::FilterIter;
-use std::{mem::replace, ops::Sub};
+use std::{
+    mem::{ManuallyDrop, MaybeUninit},
+    ops::Sub,
+};
 
 fn main() {
     println!("Hello, world!");
@@ -36,9 +39,30 @@ where
     }
 }
 
-pub(crate) enum Node<N, const D: usize, Key, Value> {
-    Inner(Vec<NodeRef<N, D, Key, Value>>),
-    Leaf(Vec<(Key, Value)>),
+pub(crate) union Node<N, const D: usize, Key, Value> {
+    inner: ManuallyDrop<Vec<NodeRef<N, D, Key, Value>>>,
+    leaf: ManuallyDrop<Vec<(Key, Value)>>,
+}
+
+impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
+    unsafe fn drop(&mut self, level: usize) {
+        if level > 0 {
+            for child in &mut *self.inner {
+                child.node.drop(level - 1);
+            }
+            ManuallyDrop::drop(&mut self.inner);
+        } else {
+            ManuallyDrop::drop(&mut self.leaf);
+        }
+    }
+
+    unsafe fn len(&self, level: usize) -> usize {
+        if level > 0 {
+            self.inner.len()
+        } else {
+            self.leaf.len()
+        }
+    }
 }
 
 impl<N, const D: usize, Key, Value> Bounded<N, D> for (Key, Value)
@@ -51,53 +75,25 @@ where
     }
 }
 
-enum RemoveResult {
-    None,
-    Removed,
-    Underfull,
-}
-
 impl<N, const D: usize, Key, Value> NodeRef<N, D, Key, Value>
 where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
     Key: Bounded<N, D>,
 {
-    pub fn insert(
+    unsafe fn insert(
         &mut self,
         max_children: usize,
+        level: usize,
         key: Key,
         value: Value,
     ) -> Option<NodeRef<N, D, Key, Value>> {
         let bounds = key.bounds();
         self.bounds = min_bounds(&self.bounds, &bounds);
-        match &mut self.node {
-            Node::Inner(children) => {
-                if children.len() == 0 {
-                    panic!("Node has no children")
-                }
-
-                // TODO: Make selector configurable?
-                let insert_child = select::minimal_volume_increase(children, &bounds).unwrap();
-                if let Some(new_node_ref) = insert_child.insert(max_children, key, value) {
-                    children.push(new_node_ref);
-                    if children.len() <= max_children {
-                        None
-                    } else {
-                        let (self_bounds, new_bounds, new_children) =
-                            split::quadratic(max_children, children);
-                        self.bounds = self_bounds;
-                        Some(NodeRef {
-                            bounds: new_bounds,
-                            node: Node::Inner(new_children),
-                        })
-                    }
-                } else {
-                    None
-                }
-            }
-            Node::Leaf(children) => {
-                // TODO: Avoid pushing if children are at capacity?
-                children.push((key, value));
+        if level > 0 {
+            let children = &mut *self.node.inner;
+            let insert_child = select::minimal_volume_increase(children, &bounds).unwrap();
+            if let Some(new_node_ref) = insert_child.insert(max_children, level - 1, key, value) {
+                children.push(new_node_ref);
                 if children.len() <= max_children {
                     None
                 } else {
@@ -106,78 +102,78 @@ where
                     self.bounds = self_bounds;
                     Some(NodeRef {
                         bounds: new_bounds,
-                        node: Node::Leaf(new_children),
+                        node: Node {
+                            inner: ManuallyDrop::new(new_children),
+                        },
                     })
                 }
+            } else {
+                None
+            }
+        } else {
+            let children = &mut *self.node.leaf;
+            // TODO: Avoid pushing if children are at capacity?
+            children.push((key, value));
+            if children.len() <= max_children {
+                None
+            } else {
+                let (self_bounds, new_bounds, new_children) =
+                    split::quadratic(max_children, children);
+                self.bounds = self_bounds;
+                Some(NodeRef {
+                    bounds: new_bounds,
+                    node: Node {
+                        leaf: ManuallyDrop::new(new_children),
+                    },
+                })
             }
         }
     }
 
-    fn remove(
+    unsafe fn remove(
         &mut self,
         min_children: usize,
+        level: usize,
         key: &Key,
         value: &Value,
-        reinsert_inners: &mut Vec<NodeRef<N, D, Key, Value>>,
-        reinsert_leafs: &mut Vec<(Key, Value)>,
-    ) -> RemoveResult
+        reinsert_nodes: &mut [Option<Node<N, D, Key, Value>>],
+    ) -> bool
     where
         Key: Eq,
         Value: Eq,
     {
-        match &mut self.node {
-            Node::Inner(children) => {
-                let mut i = children.len();
-                let mut removed = false;
-                while i > 0 && !removed {
-                    i -= 1;
-                    if children[i].bounds.intersects(&key.bounds()) {
-                        match children[i].remove(
-                            min_children,
-                            key,
-                            value,
-                            reinsert_inners,
-                            reinsert_leafs,
-                        ) {
-                            RemoveResult::None => {}
-                            RemoveResult::Removed => {
-                                removed = true;
-                            }
-                            RemoveResult::Underfull => {
-                                children.remove(i);
-                                removed = true;
-                            }
+        if level > 0 {
+            let children = &mut *self.node.inner;
+            let mut i = children.len();
+            let mut removed = false;
+            while i > 0 && !removed {
+                i -= 1;
+                if children[i].bounds.intersects(&key.bounds()) {
+                    if children[i].remove(min_children, level - 1, key, value, reinsert_nodes) {
+                        if children[i].node.len(level - 1) < min_children {
+                            let removed_child = children.swap_remove(i);
+                            reinsert_nodes[level - 1] = Some(removed_child.node);
                         }
+                        removed = true;
                     }
                 }
-
-                if children.len() < min_children {
-                    reinsert_inners.append(children);
-                    return RemoveResult::Underfull;
-                }
-
-                if removed {
-                    self.bounds =
-                        min_bounds_all(children.iter().map(|child| child.bounds())).unwrap();
-                    return RemoveResult::Removed;
-                }
-                return RemoveResult::None;
             }
-            Node::Leaf(children) => {
-                let index = children.iter().position(|(k, v)| k == key && v == value);
-                if let Some(i) = index {
-                    children.remove(i);
 
-                    if children.len() < min_children {
-                        reinsert_leafs.append(children);
-                        return RemoveResult::Underfull;
-                    }
-
-                    self.bounds = min_bounds_all(children.iter().map(|(k, _)| k.bounds())).unwrap();
-                    return RemoveResult::Removed;
-                }
-                return RemoveResult::None;
+            if removed {
+                // TODO: Dangerous because children could be empty
+                self.bounds = min_bounds_all(children.iter().map(|child| child.bounds())).unwrap();
             }
+            return removed;
+        } else {
+            let children = &mut *self.node.leaf;
+            let index = children.iter().position(|(k, v)| k == key && v == value);
+            if let Some(i) = index {
+                children.remove(i);
+
+                self.bounds = min_bounds_all(children.iter().map(|(k, _)| k.bounds())).unwrap();
+                return true;
+            }
+            return false;
         }
     }
 }
@@ -189,8 +185,18 @@ pub struct Config {
 
 pub struct RTree<N, const D: usize, Key, Value> {
     config: Config,
-    root: Option<NodeRef<N, D, Key, Value>>,
-    empty_slice: [(Key, Value); 0],
+    height: usize,
+    root: MaybeUninit<NodeRef<N, D, Key, Value>>,
+}
+
+impl<N, const D: usize, Key, Value> Drop for RTree<N, D, Key, Value> {
+    fn drop(&mut self) {
+        if self.height > 0 {
+            unsafe {
+                self.root.assume_init_read().node.drop(self.height - 1);
+            }
+        }
+    }
 }
 
 impl<'a, N, const D: usize, Key, Value> IntoIterator for &'a RTree<N, D, Key, Value>
@@ -202,22 +208,11 @@ where
     type IntoIter = iter::Iter<'a, N, D, Key, Value>;
 
     fn into_iter(self) -> Self::IntoIter {
-        if let Some(root) = &self.root {
-            match &root.node {
-                Node::Inner(children) => iter::Iter {
-                    tail: vec![children.iter()],
-                    head: self.empty_slice.iter(),
-                },
-                Node::Leaf(children) => iter::Iter {
-                    tail: Vec::new(),
-                    head: children.iter(),
-                },
-            }
+        if self.height > 0 {
+            let root = unsafe { self.root.assume_init_ref() };
+            unsafe { Self::IntoIter::new(self.height, &root.node) }
         } else {
-            iter::Iter {
-                tail: Vec::new(),
-                head: self.empty_slice.iter(),
-            }
+            Self::IntoIter::empty()
         }
     }
 }
@@ -235,33 +230,23 @@ where
         &'a self,
         filter: Filter,
     ) -> FilterIter<'a, N, D, Key, Value, Filter> {
-        if let Some(root) = &self.root {
-            match &root.node {
-                Node::Inner(children) => FilterIter {
-                    filter,
-                    tail: vec![children.iter()],
-                    head: self.empty_slice.iter(),
-                },
-                Node::Leaf(children) => FilterIter {
-                    filter,
-                    tail: Vec::new(),
-                    head: children.iter(),
-                },
+        if self.height > 0 {
+            let root = unsafe { self.root.assume_init_ref() };
+            if filter.test_bounds(&root.bounds) {
+                unsafe { FilterIter::new(self.height, &root.node, filter) }
+            } else {
+                FilterIter::empty(filter)
             }
         } else {
-            FilterIter {
-                filter,
-                tail: Vec::new(),
-                head: self.empty_slice.iter(),
-            }
+            FilterIter::empty(filter)
         }
     }
 
     pub fn new(config: Config) -> RTree<N, D, Key, Value> {
         return RTree {
             config,
-            root: None,
-            empty_slice: [],
+            height: 0,
+            root: MaybeUninit::uninit(),
         };
     }
 }
@@ -272,31 +257,31 @@ where
     Key: Bounded<N, D>,
 {
     pub fn insert(&mut self, key: Key, value: Value) {
-        if let Some(root) = &mut self.root {
-            if let Some(new_node_ref) = root.insert(self.config.max_children, key, value) {
-                // TODO: Is there a better way to do this?
-                let prev_root = replace(
-                    root,
-                    NodeRef {
-                        bounds: new_node_ref.bounds.clone(),
-                        node: Node::Inner(vec![new_node_ref]),
+        if self.height > 0 {
+            let root = unsafe { self.root.assume_init_mut() };
+            if let Some(new_node_ref) =
+                unsafe { root.insert(self.config.max_children, self.height - 1, key, value) }
+            {
+                let prev_root = unsafe { self.root.assume_init_read() };
+                self.root.write(NodeRef {
+                    bounds: min_bounds(&prev_root.bounds, &new_node_ref.bounds),
+                    node: Node {
+                        inner: ManuallyDrop::new(vec![prev_root, new_node_ref]),
                     },
-                );
-                root.bounds = min_bounds(&root.bounds, &prev_root.bounds);
-                if let Node::Inner(children) = &mut root.node {
-                    children.push(prev_root);
-                } else {
-                    panic!("New root must be an inner node");
-                }
+                });
+                self.height += 1;
             }
         } else {
             let bounds = key.bounds();
             let mut children = Vec::with_capacity(self.config.max_children);
             children.push((key, value));
-            self.root = Some(NodeRef {
+            self.root.write(NodeRef {
                 bounds,
-                node: Node::Leaf(children),
-            })
+                node: Node {
+                    leaf: ManuallyDrop::new(children),
+                },
+            });
+            self.height = 1;
         }
     }
 
@@ -305,18 +290,44 @@ where
         Key: Eq,
         Value: Eq,
     {
-        // TODO: Implement reinsertion
-        let mut reinsert_inners: Vec<NodeRef<N, D, Key, Value>> = Vec::new();
-        let mut reinsert_leafs: Vec<(Key, Value)> = Vec::new();
-        if let Some(root) = &mut self.root {
-            root.remove(
-                self.config.min_children,
-                &key,
-                &value,
-                &mut reinsert_inners,
-                &mut reinsert_leafs,
-            );
-            true
+        if self.height > 0 {
+            // TODO: Implement reinsertion
+            let mut reinsert_nodes: Box<[Option<Node<N, D, Key, Value>>]> =
+                std::iter::repeat_with(|| None)
+                    .take(self.height - 1)
+                    .collect();
+            if unsafe {
+                self.root.assume_init_mut().remove(
+                    self.config.min_children,
+                    self.height - 1,
+                    &key,
+                    &value,
+                    &mut reinsert_nodes,
+                )
+            } {
+                let root_len = unsafe { self.root.assume_init_ref().node.len(self.height - 1) };
+                if root_len == 0 {
+                    // Root has become empty and should be dropped
+                    unsafe {
+                        self.root.assume_init_read().node.drop(self.height - 1);
+                    }
+                    self.height = 0;
+                } else if root_len == 1 && self.height > 1 {
+                    // Root is an inner node with only one child
+                    // The one child becomes the new root
+                    let new_root =
+                        (*unsafe { &mut self.root.assume_init_mut().node.inner }).remove(0);
+
+                    // ensure old root is dropped before being overwritten
+                    unsafe {
+                        ManuallyDrop::drop(&mut self.root.assume_init_mut().node.inner);
+                    }
+                    *unsafe { self.root.assume_init_mut() } = new_root;
+                    self.height -= 1;
+                }
+                return true;
+            }
+            return false;
         } else {
             false
         }
@@ -389,6 +400,14 @@ mod tests {
             Bounds {
                 min: Vector([0, 2]),
                 max: Vector([0, 2]),
+            },
+            (),
+        );
+
+        tree.insert(
+            Bounds {
+                min: Vector([1, 3]),
+                max: Vector([1, 3]),
             },
             (),
         );
