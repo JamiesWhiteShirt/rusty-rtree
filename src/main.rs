@@ -11,8 +11,9 @@ mod sphere;
 mod split;
 mod vector;
 
-use bounds::{min_bounds, Bounded, Bounds};
+use bounds::{min_bounds, min_bounds_all, Bounded, Bounds};
 use filter::SpatialFilter;
+use intersects::Intersects;
 use iter::FilterIter;
 use std::{mem::replace, ops::Sub};
 
@@ -48,6 +49,12 @@ where
     fn bounds(&self) -> Bounds<N, D> {
         self.0.bounds()
     }
+}
+
+enum RemoveResult {
+    None,
+    Removed,
+    Underfull,
 }
 
 impl<N, const D: usize, Key, Value> NodeRef<N, D, Key, Value>
@@ -89,6 +96,7 @@ where
                 }
             }
             Node::Leaf(children) => {
+                // TODO: Avoid pushing if children are at capacity?
                 children.push((key, value));
                 if children.len() <= max_children {
                     None
@@ -101,6 +109,74 @@ where
                         node: Node::Leaf(new_children),
                     })
                 }
+            }
+        }
+    }
+
+    fn remove(
+        &mut self,
+        min_children: usize,
+        key: &Key,
+        value: &Value,
+        reinsert_inners: &mut Vec<NodeRef<N, D, Key, Value>>,
+        reinsert_leafs: &mut Vec<(Key, Value)>,
+    ) -> RemoveResult
+    where
+        Key: Eq,
+        Value: Eq,
+    {
+        match &mut self.node {
+            Node::Inner(children) => {
+                let mut i = children.len();
+                let mut removed = false;
+                while i > 0 && !removed {
+                    i -= 1;
+                    if children[i].bounds.intersects(&key.bounds()) {
+                        match children[i].remove(
+                            min_children,
+                            key,
+                            value,
+                            reinsert_inners,
+                            reinsert_leafs,
+                        ) {
+                            RemoveResult::None => {}
+                            RemoveResult::Removed => {
+                                removed = true;
+                            }
+                            RemoveResult::Underfull => {
+                                children.remove(i);
+                                removed = true;
+                            }
+                        }
+                    }
+                }
+
+                if children.len() < min_children {
+                    reinsert_inners.append(children);
+                    return RemoveResult::Underfull;
+                }
+
+                if removed {
+                    self.bounds =
+                        min_bounds_all(children.iter().map(|child| child.bounds())).unwrap();
+                    return RemoveResult::Removed;
+                }
+                return RemoveResult::None;
+            }
+            Node::Leaf(children) => {
+                let index = children.iter().position(|(k, v)| k == key && v == value);
+                if let Some(i) = index {
+                    children.remove(i);
+
+                    if children.len() < min_children {
+                        reinsert_leafs.append(children);
+                        return RemoveResult::Underfull;
+                    }
+
+                    self.bounds = min_bounds_all(children.iter().map(|(k, _)| k.bounds())).unwrap();
+                    return RemoveResult::Removed;
+                }
+                return RemoveResult::None;
             }
         }
     }
@@ -221,6 +297,28 @@ where
                 bounds,
                 node: Node::Leaf(children),
             })
+        }
+    }
+
+    pub fn remove(&mut self, key: &Key, value: &Value) -> bool
+    where
+        Key: Eq,
+        Value: Eq,
+    {
+        // TODO: Implement reinsertion
+        let mut reinsert_inners: Vec<NodeRef<N, D, Key, Value>> = Vec::new();
+        let mut reinsert_leafs: Vec<(Key, Value)> = Vec::new();
+        if let Some(root) = &mut self.root {
+            root.remove(
+                self.config.min_children,
+                &key,
+                &value,
+                &mut reinsert_inners,
+                &mut reinsert_leafs,
+            );
+            true
+        } else {
+            false
         }
     }
 }

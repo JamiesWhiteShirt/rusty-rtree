@@ -41,6 +41,15 @@ where
     Bounds { min, max }
 }
 
+pub fn min_bounds_all<N, const D: usize>(
+    bounds: impl IntoIterator<Item = Bounds<N, D>>,
+) -> Option<Bounds<N, D>>
+where
+    N: Ord + Clone,
+{
+    bounds.into_iter().reduce(|lhs, rhs| min_bounds(&lhs, &rhs))
+}
+
 impl<N, const D: usize> Bounded<N, D> for Bounds<N, D>
 where
     N: Clone,
