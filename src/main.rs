@@ -226,56 +226,6 @@ where
         }
     }
 
-    unsafe fn insert(
-        &mut self,
-        max_children: usize,
-        level: usize,
-        key: Key,
-        value: Value,
-    ) -> Option<NodeRef<N, D, Key, Value>> {
-        let bounds = key.bounds();
-        self.bounds = min_bounds(&self.bounds, &bounds);
-        if level > 0 {
-            let children = &mut *self.node.inner;
-            let insert_child = select::minimal_volume_increase(children, &bounds).unwrap();
-            if let Some(new_node_ref) = insert_child.insert(max_children, level - 1, key, value) {
-                children.push(new_node_ref);
-                if children.len() <= max_children {
-                    None
-                } else {
-                    let (self_bounds, new_bounds, new_children) =
-                        split::quadratic(max_children, children);
-                    self.bounds = self_bounds;
-                    Some(NodeRef {
-                        bounds: new_bounds,
-                        node: Node {
-                            inner: ManuallyDrop::new(new_children),
-                        },
-                    })
-                }
-            } else {
-                None
-            }
-        } else {
-            let children = &mut *self.node.leaf;
-            // TODO: Avoid pushing if children are at capacity?
-            children.push((key, value));
-            if children.len() <= max_children {
-                None
-            } else {
-                let (self_bounds, new_bounds, new_children) =
-                    split::quadratic(max_children, children);
-                self.bounds = self_bounds;
-                Some(NodeRef {
-                    bounds: new_bounds,
-                    node: Node {
-                        leaf: ManuallyDrop::new(new_children),
-                    },
-                })
-            }
-        }
-    }
-
     unsafe fn recompute_bounds(&mut self, level: usize) {
         self.bounds = self.node.compute_bounds(level).unwrap();
     }
@@ -382,9 +332,13 @@ where
     pub fn insert(&mut self, key: Key, value: Value) {
         if self.height > 0 {
             let root = unsafe { self.root.assume_init_mut() };
-            if let Some(new_node_ref) =
-                unsafe { root.insert(self.config.max_children, self.height - 1, key, value) }
-            {
+            if let Some(new_node_ref) = unsafe {
+                root.insert_entry(
+                    self.config.max_children,
+                    self.height - 1,
+                    NodeEntry::Leaf((key, value)),
+                )
+            } {
                 let prev_root = unsafe { self.root.assume_init_read() };
                 self.root.write(NodeRef {
                     bounds: min_bounds(&prev_root.bounds, &new_node_ref.bounds),
