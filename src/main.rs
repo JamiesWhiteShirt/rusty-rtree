@@ -309,7 +309,7 @@ where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
     Key: Bounded<N, D>,
 {
-    /// Inserts an entry into an inner node at the given level.
+    /// Inserts an entry into a node at the given level.
     unsafe fn insert_entry(&mut self, level: usize, entry: NodeEntry<N, D, Key, Value>) {
         if self.height == 0 {
             panic!("Cannot insert entry into empty tree");
