@@ -256,14 +256,13 @@ where
             if let Some(new_node_ref) =
                 insert_child.insert_entry(max_children, min_children, depth - 1, entry)
             {
-                // TODO: Avoid pushing if children are at capacity?
-                children.push(new_node_ref);
-                if children.len() <= max_children {
+                if children.len() < max_children {
+                    children.push(new_node_ref);
                     self.bounds = min_bounds(&self.bounds, &entry_bounds);
                     None
                 } else {
                     let (self_bounds, new_bounds, new_children) =
-                        split::quadratic(max_children, min_children, children);
+                        split::quadratic(max_children, min_children, children, new_node_ref);
                     self.bounds = self_bounds;
                     Some(NodeRef {
                         bounds: new_bounds,
@@ -280,14 +279,13 @@ where
             match entry {
                 NodeEntry::Inner(entry) => {
                     let children = &mut *self.node.inner;
-                    // TODO: Avoid pushing if children are at capacity?
-                    children.push(entry);
-                    if children.len() <= max_children {
+                    if children.len() < max_children {
+                        children.push(entry);
                         self.bounds = min_bounds(&self.bounds, &entry_bounds);
                         None
                     } else {
                         let (self_bounds, new_bounds, new_children) =
-                            split::quadratic(max_children, min_children, children);
+                            split::quadratic(max_children, min_children, children, entry);
                         self.bounds = self_bounds;
                         Some(NodeRef {
                             bounds: new_bounds,
@@ -299,14 +297,13 @@ where
                 }
                 NodeEntry::Leaf(entry) => {
                     let children = &mut *self.node.leaf;
-                    // TODO: Avoid pushing if children are at capacity?
-                    children.push(entry);
-                    if children.len() <= max_children {
+                    if children.len() < max_children {
+                        children.push(entry);
                         self.bounds = min_bounds(&self.bounds, &entry_bounds);
                         None
                     } else {
                         let (self_bounds, new_bounds, new_children) =
-                            split::quadratic(max_children, min_children, children);
+                            split::quadratic(max_children, min_children, children, entry);
                         self.bounds = self_bounds;
                         Some(NodeRef {
                             bounds: new_bounds,
