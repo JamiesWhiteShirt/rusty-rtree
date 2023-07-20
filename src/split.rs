@@ -31,7 +31,7 @@ where
 {
     let (i_1, i_2) = worst_combination(values);
     values.swap(0, i_1);
-    values.remove(i_2)
+    values.swap_remove(i_2)
 }
 
 fn best_candidate_for_group<N, const D: usize, Value>(
@@ -54,6 +54,7 @@ where
 /// bounds.
 pub fn quadratic<N, const D: usize, Value>(
     max_children: usize,
+    min_children: usize,
     values: &mut Vec<Value>,
 ) -> (Bounds<N, D>, Bounds<N, D>, Vec<Value>)
 where
@@ -63,8 +64,6 @@ where
     if values.len() < 2 {
         panic!("Must have more than 2 children to split!");
     }
-
-    let min_group_size = values.len() / 2;
 
     let mut group_2 = Vec::with_capacity(max_children);
     group_2.push(seed_split_groups(values));
@@ -83,9 +82,9 @@ where
         );
 
         let add_to_group_1 = if candidate_1.1 < candidate_2.1 {
-            group_2.len() + remaining.len() - 1 >= min_group_size
+            group_2.len() + remaining.len() - 1 >= min_children
         } else {
-            group_1_len + remaining.len() - 1 == min_group_size
+            group_1_len + remaining.len() - 1 == min_children
         };
 
         if add_to_group_1 {
@@ -94,7 +93,7 @@ where
             group_1_len += 1;
         } else {
             bounds_2 = min_bounds(&bounds_2, &remaining[candidate_2.0].bounds());
-            group_2.push(values.remove(candidate_2.0))
+            group_2.push(values.remove(group_1_len + candidate_2.0))
         }
     }
 

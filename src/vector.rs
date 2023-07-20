@@ -11,8 +11,10 @@ use crate::{
     sphere::Sphere,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Vector<S, const D: usize>(pub [S; D]);
+
+impl<S, const D: usize> Eq for Vector<S, D> where S: Eq {}
 
 impl<S, const D: usize> Vector<S, D> {
     pub fn zip<'a>(&self, rhs: &'a Self) -> impl ExactSizeIterator<Item = (&S, &'a S)> {

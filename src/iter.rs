@@ -1,4 +1,4 @@
-use std::{mem::ManuallyDrop, slice};
+use std::{cmp::min, mem::ManuallyDrop, slice};
 
 use crate::{bounds::Bounded, filter::SpatialFilter, Node, NodeRef};
 
@@ -19,7 +19,7 @@ impl<'a, N, const D: usize, Key, Value> Iter<'a, N, D, Key, Value> {
         root: &'a Node<N, D, Key, Value>,
     ) -> Iter<'a, N, D, Key, Value> {
         let mut stack = Vec::with_capacity(height);
-        stack.push(if height > 1 {
+        stack.push(if height > 0 {
             IterLevel {
                 inner: ManuallyDrop::new(root.inner.iter()),
             }
@@ -39,12 +39,27 @@ impl<'a, N, const D: usize, Key, Value> Iter<'a, N, D, Key, Value> {
     }
 }
 
+impl<'a, N, const D: usize, Key, Value> Drop for Iter<'a, N, D, Key, Value> {
+    fn drop(&mut self) {
+        for i in 0..min(self.stack.len(), self.height) {
+            unsafe {
+                ManuallyDrop::drop(&mut self.stack[i].inner);
+            }
+        }
+        if self.stack.len() == self.height + 1 {
+            unsafe {
+                ManuallyDrop::drop(&mut self.stack[self.height].leaf);
+            }
+        }
+    }
+}
+
 impl<'a, N, const D: usize, Key, Value> Iterator for Iter<'a, N, D, Key, Value> {
     type Item = &'a (Key, Value);
 
     fn next(&mut self) -> Option<Self::Item> {
         while !self.stack.is_empty() {
-            let level = self.height - self.stack.len();
+            let level = (self.height + 1) - self.stack.len();
             if level == 0 {
                 // Iterating over leaf node
                 if let Some(value) = (*unsafe { &mut self.stack.last_mut().unwrap().leaf }).next() {
@@ -113,6 +128,21 @@ impl<'a, N, const D: usize, Key, Value, Filter> FilterIter<'a, N, D, Key, Value,
     }
 }
 
+impl<'a, N, const D: usize, Key, Value, Filter> Drop for FilterIter<'a, N, D, Key, Value, Filter> {
+    fn drop(&mut self) {
+        for i in 0..min(self.stack.len(), self.height) {
+            unsafe {
+                ManuallyDrop::drop(&mut self.stack[i].inner);
+            }
+        }
+        if self.stack.len() == self.height + 1 {
+            unsafe {
+                ManuallyDrop::drop(&mut self.stack[self.height].leaf);
+            }
+        }
+    }
+}
+
 impl<'a, N, const D: usize, Key, Value, Filter> Iterator
     for FilterIter<'a, N, D, Key, Value, Filter>
 where
@@ -124,7 +154,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         while !self.stack.is_empty() {
-            let level = self.height - self.stack.len();
+            let level = (self.height + 1) - self.stack.len();
             if level == 0 {
                 // Iterating over leaf node
                 if let Some(value) = (*unsafe { &mut self.stack.last_mut().unwrap().leaf })

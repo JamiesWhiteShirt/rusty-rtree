@@ -66,6 +66,7 @@ dependencies = [
  "csv",
  "float-ord",
  "noisy_float",
+ "num-traits",
  "rand",
 ]
 

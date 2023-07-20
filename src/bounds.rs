@@ -1,5 +1,5 @@
 use std::{
-    cmp,
+    array, cmp,
     ops::{Index, Sub},
 };
 
@@ -12,10 +12,18 @@ pub trait Bounded<N, const D: usize> {
     fn bounds(&self) -> Bounds<N, D>;
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Bounds<N, const D: usize> {
     pub min: Vector<N, D>,
     pub max: Vector<N, D>,
+}
+
+impl<N, const D: usize> Eq for Bounds<N, D> where N: Eq {}
+
+pub fn empty_bounds<N: num_traits::Bounded, const D: usize>() -> Bounds<N, D> {
+    let min = Vector(array::from_fn(|_| N::max_value()));
+    let max = Vector(array::from_fn(|_| N::min_value()));
+    Bounds { min, max }
 }
 
 pub fn min_bounds<N, const D: usize>(lhs: &Bounds<N, D>, rhs: &Bounds<N, D>) -> Bounds<N, D>
@@ -43,11 +51,15 @@ where
 
 pub fn min_bounds_all<N, const D: usize>(
     bounds: impl IntoIterator<Item = Bounds<N, D>>,
-) -> Option<Bounds<N, D>>
+) -> Bounds<N, D>
 where
-    N: Ord + Clone,
+    N: Ord + num_traits::Bounded + Clone,
 {
-    bounds.into_iter().reduce(|lhs, rhs| min_bounds(&lhs, &rhs))
+    let mut res = empty_bounds();
+    for bounds in bounds {
+        res = min_bounds(&res, &bounds)
+    }
+    res
 }
 
 impl<N, const D: usize> Bounded<N, D> for Bounds<N, D>
