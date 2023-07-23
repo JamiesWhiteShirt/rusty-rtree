@@ -2,365 +2,26 @@
 
 mod bounds;
 mod filter;
+mod fs_vec;
 mod intersects;
 mod iter;
 mod line;
+mod node;
 mod ray;
 mod select;
 mod sphere;
 mod split;
 mod vector;
 
-use bounds::{empty_bounds, min_bounds, min_bounds_all, Bounded, Bounds};
+use bounds::{empty_bounds, min_bounds, Bounded};
 use filter::SpatialFilter;
-use intersects::Intersects;
+use fs_vec::{FSVecData, FSVecOps};
 use iter::FilterIter;
-use std::{
-    fmt::Debug,
-    mem::{replace, take, ManuallyDrop},
-    ops::Sub,
-};
+use node::{Node, NodeEntry, NodeRef};
+use std::{fmt::Debug, ops::Sub, ptr};
 
 fn main() {
     println!("Hello, world!");
-}
-
-pub(crate) struct NodeRef<N, const D: usize, Key, Value> {
-    pub(crate) bounds: Bounds<N, D>,
-    pub(crate) node: Node<N, D, Key, Value>,
-}
-
-impl<N, const D: usize, Key, Value> Bounded<N, D> for NodeRef<N, D, Key, Value>
-where
-    N: Clone,
-    Key: Bounded<N, D>,
-{
-    fn bounds(&self) -> Bounds<N, D> {
-        self.bounds.clone()
-    }
-}
-
-struct LNodeRef<'a, N, const D: usize, Key, Value> {
-    level: usize,
-    value: &'a NodeRef<N, D, Key, Value>,
-}
-
-impl<'a, N, const D: usize, Key, Value> LNodeRef<'a, N, D, Key, Value> {
-    fn debug_assert_bvh(&self) -> Bounds<N, D>
-    where
-        Key: Bounded<N, D>,
-        N: Ord + num_traits::Bounded + Clone + Eq + Debug,
-    {
-        let bounds = if self.level > 0 {
-            min_bounds_all(unsafe { &self.value.node.inner }.iter().map(|child| {
-                LNodeRef {
-                    level: self.level - 1,
-                    value: child,
-                }
-                .debug_assert_bvh()
-            }))
-        } else {
-            min_bounds_all(
-                unsafe { &self.value.node.leaf }
-                    .iter()
-                    .map(|(key, _)| key.bounds()),
-            )
-        };
-        assert_eq!(bounds, self.value.bounds);
-        bounds
-    }
-}
-
-impl<'a, N, const D: usize, Key, Value> Debug for LNodeRef<'a, N, D, Key, Value>
-where
-    N: Debug,
-    Key: Debug,
-    Value: Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        unsafe { self.value.fmt(f, self.level) }
-    }
-}
-
-enum NodeEntry<N, const D: usize, Key, Value> {
-    Inner(NodeRef<N, D, Key, Value>),
-    Leaf((Key, Value)),
-}
-
-impl<N, const D: usize, Key, Value> Bounded<N, D> for NodeEntry<N, D, Key, Value>
-where
-    N: Clone,
-    Key: Bounded<N, D>,
-{
-    fn bounds(&self) -> Bounds<N, D> {
-        match self {
-            NodeEntry::Inner(node_ref) => node_ref.bounds(),
-            NodeEntry::Leaf((key, _)) => key.bounds(),
-        }
-    }
-}
-
-pub(crate) union Node<N, const D: usize, Key, Value> {
-    inner: ManuallyDrop<Vec<NodeRef<N, D, Key, Value>>>,
-    leaf: ManuallyDrop<Vec<(Key, Value)>>,
-}
-
-impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
-    unsafe fn drop(&mut self, level: usize) {
-        if level > 0 {
-            for child in &mut *self.inner {
-                child.drop(level - 1);
-            }
-            ManuallyDrop::drop(&mut self.inner);
-        } else {
-            ManuallyDrop::drop(&mut self.leaf);
-        }
-    }
-
-    unsafe fn len(&self, level: usize) -> usize {
-        if level > 0 {
-            self.inner.len()
-        } else {
-            self.leaf.len()
-        }
-    }
-
-    unsafe fn take(&mut self, level: usize) -> Node<N, D, Key, Value> {
-        if level > 0 {
-            Node {
-                inner: ManuallyDrop::new(take(&mut *self.inner)),
-            }
-        } else {
-            Node {
-                leaf: ManuallyDrop::new(take(&mut *self.leaf)),
-            }
-        }
-    }
-
-    unsafe fn fmt(&self, f: &mut std::fmt::Formatter<'_>, level: usize) -> std::fmt::Result
-    where
-        N: Debug,
-        Key: Debug,
-        Value: Debug,
-    {
-        if level > 0 {
-            f.debug_list()
-                .entries(unsafe {
-                    self.inner.iter().map(|child| LNodeRef {
-                        level: level - 1,
-                        value: child,
-                    })
-                })
-                .finish()
-        } else {
-            f.debug_list()
-                .entries(unsafe { self.leaf.iter().map(|(key, value)| (key, value)) })
-                .finish()
-        }
-    }
-}
-
-struct LNode<'a, N, const D: usize, Key, Value> {
-    level: usize,
-    value: &'a Node<N, D, Key, Value>,
-}
-
-impl<'a, N, const D: usize, Key, Value> Debug for LNode<'a, N, D, Key, Value>
-where
-    N: Debug,
-    Key: Debug,
-    Value: Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        unsafe { self.value.fmt(f, self.level) }
-    }
-}
-
-impl<N, const D: usize, Key, Value> Bounded<N, D> for (Key, Value)
-where
-    N: Ord,
-    Key: Bounded<N, D>,
-{
-    fn bounds(&self) -> Bounds<N, D> {
-        self.0.bounds()
-    }
-}
-
-impl<N, const D: usize, Key, Value> NodeRef<N, D, Key, Value> {
-    unsafe fn drop(&mut self, level: usize) {
-        self.node.drop(level);
-    }
-
-    fn take(&mut self, level: usize) -> NodeRef<N, D, Key, Value>
-    where
-        N: num_traits::Bounded,
-    {
-        NodeRef {
-            bounds: replace(&mut self.bounds, empty_bounds()),
-            node: unsafe { self.node.take(level) },
-        }
-    }
-
-    unsafe fn fmt(&self, f: &mut std::fmt::Formatter<'_>, level: usize) -> std::fmt::Result
-    where
-        N: Debug,
-        Key: Debug,
-        Value: Debug,
-    {
-        f.debug_struct("NodeRef")
-            .field("bounds", &self.bounds)
-            .field(
-                "node",
-                &LNode {
-                    level,
-                    value: &self.node,
-                },
-            )
-            .finish()
-    }
-}
-
-impl<N, const D: usize, Key, Value> NodeRef<N, D, Key, Value>
-where
-    N: Ord + Clone + Sub<Output = N> + Into<f64>,
-    Key: Bounded<N, D>,
-{
-    /// Safety:
-    /// - Node must be an inner node
-    unsafe fn take_single_inner_child(&mut self) -> Option<NodeRef<N, D, Key, Value>>
-    where
-        N: num_traits::Bounded,
-    {
-        if self.node.inner.len() == 1 {
-            self.bounds = empty_bounds();
-            Some((*self.node.inner).swap_remove(0))
-        } else {
-            None
-        }
-    }
-
-    /// Safety:
-    /// - `depth` must be no greater than the height of the tree.
-    /// - `entry` must be `NodeEntry::Inner` if nodes at the target `depth` are inner nodes, or `NodeEntry::Leaf` if they are leaf nodes.
-    unsafe fn insert_entry(
-        &mut self,
-        max_children: usize,
-        min_children: usize,
-        depth: usize,
-        entry: NodeEntry<N, D, Key, Value>,
-    ) -> Option<NodeRef<N, D, Key, Value>> {
-        let entry_bounds = entry.bounds();
-        if depth > 0 {
-            let children = &mut *self.node.inner;
-            let insert_child = select::minimal_volume_increase(children, &entry.bounds()).unwrap();
-            if let Some(new_node_ref) =
-                insert_child.insert_entry(max_children, min_children, depth - 1, entry)
-            {
-                if children.len() < max_children {
-                    children.push(new_node_ref);
-                    self.bounds = min_bounds(&self.bounds, &entry_bounds);
-                    None
-                } else {
-                    let (self_bounds, new_bounds, new_children) =
-                        split::quadratic(max_children, min_children, children, new_node_ref);
-                    self.bounds = self_bounds;
-                    Some(NodeRef {
-                        bounds: new_bounds,
-                        node: Node {
-                            inner: ManuallyDrop::new(new_children),
-                        },
-                    })
-                }
-            } else {
-                self.bounds = min_bounds(&self.bounds, &entry_bounds);
-                None
-            }
-        } else {
-            match entry {
-                NodeEntry::Inner(entry) => {
-                    let children = &mut *self.node.inner;
-                    if children.len() < max_children {
-                        children.push(entry);
-                        self.bounds = min_bounds(&self.bounds, &entry_bounds);
-                        None
-                    } else {
-                        let (self_bounds, new_bounds, new_children) =
-                            split::quadratic(max_children, min_children, children, entry);
-                        self.bounds = self_bounds;
-                        Some(NodeRef {
-                            bounds: new_bounds,
-                            node: Node {
-                                inner: ManuallyDrop::new(new_children),
-                            },
-                        })
-                    }
-                }
-                NodeEntry::Leaf(entry) => {
-                    let children = &mut *self.node.leaf;
-                    if children.len() < max_children {
-                        children.push(entry);
-                        self.bounds = min_bounds(&self.bounds, &entry_bounds);
-                        None
-                    } else {
-                        let (self_bounds, new_bounds, new_children) =
-                            split::quadratic(max_children, min_children, children, entry);
-                        self.bounds = self_bounds;
-                        Some(NodeRef {
-                            bounds: new_bounds,
-                            node: Node {
-                                leaf: ManuallyDrop::new(new_children),
-                            },
-                        })
-                    }
-                }
-            }
-        }
-    }
-
-    unsafe fn remove(
-        &mut self,
-        min_children: usize,
-        level: usize,
-        key: &Key,
-        value: &Value,
-        reinsert_nodes: &mut [Option<Node<N, D, Key, Value>>],
-    ) -> bool
-    where
-        N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-        Key: Bounded<N, D> + Eq,
-        Value: Eq,
-    {
-        if level > 0 {
-            let children = &mut *self.node.inner;
-            let mut i = children.len();
-            while i > 0 {
-                i -= 1;
-                if children[i].bounds.intersects(&key.bounds())
-                    && children[i].remove(min_children, level - 1, key, value, reinsert_nodes)
-                {
-                    if children[i].node.len(level - 1) < min_children {
-                        let removed_child = children.swap_remove(i);
-                        reinsert_nodes[level - 1] = Some(removed_child.node);
-                    }
-
-                    self.bounds = min_bounds_all(children.iter().map(|child| child.bounds()));
-
-                    return true;
-                }
-            }
-            return false;
-        } else {
-            let children = &mut *self.node.leaf;
-            let index = children.iter().position(|(k, v)| k == key && v == value);
-            if let Some(i) = index {
-                children.remove(i);
-                self.bounds = min_bounds_all(children.iter().map(|(key, _)| key.bounds()));
-
-                return true;
-            }
-            return false;
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -372,7 +33,7 @@ pub struct Config {
 pub struct RTree<N, const D: usize, Key, Value> {
     config: Config,
     height: usize,
-    root: NodeRef<N, D, Key, Value>,
+    root: Node<N, D, Key, Value>,
 }
 
 impl<N, const D: usize, Key, Value> Debug for RTree<N, D, Key, Value>
@@ -384,13 +45,7 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RTree")
             .field("config", &self.config)
-            .field(
-                "root",
-                &LNodeRef {
-                    level: self.height,
-                    value: &self.root,
-                },
-            )
+            .field("root", &NodeRef::new(self.height, &self.root))
             .finish()
     }
 }
@@ -398,7 +53,7 @@ where
 impl<N, const D: usize, Key, Value> Drop for RTree<N, D, Key, Value> {
     fn drop(&mut self) {
         unsafe {
-            self.root.drop(self.height);
+            self.root.drop(self.height, self.config.max_children);
         }
     }
 }
@@ -412,7 +67,7 @@ where
     type IntoIter = iter::Iter<'a, N, D, Key, Value>;
 
     fn into_iter(self) -> Self::IntoIter {
-        unsafe { Self::IntoIter::new(self.height, &self.root.node) }
+        unsafe { Self::IntoIter::new(self.height, &self.root) }
     }
 }
 
@@ -429,21 +84,14 @@ where
         &'a self,
         filter: Filter,
     ) -> FilterIter<'a, N, D, Key, Value, Filter> {
-        if filter.test_bounds(&self.root.bounds) {
-            return unsafe { FilterIter::new(self.height, &self.root.node, filter) };
-        }
-        return FilterIter::empty(filter);
+        unsafe { FilterIter::new(self.height, &self.root, filter) }
     }
 
     pub fn new(config: Config) -> RTree<N, D, Key, Value> {
+        let ops = FSVecOps::<(Key, Value)>::new_ops(config.max_children);
         return RTree {
             height: 0,
-            root: NodeRef {
-                bounds: empty_bounds(),
-                node: Node {
-                    leaf: ManuallyDrop::new(Vec::with_capacity(config.max_children)),
-                },
-            },
+            root: Node::new(empty_bounds(), unsafe { ops.new() }),
             config,
         };
     }
@@ -454,16 +102,16 @@ where
     N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
     Key: Bounded<N, D>,
 {
-    fn set_root(&mut self, new_root: NodeRef<N, D, Key, Value>) {
+    fn set_root(&mut self, new_root: Node<N, D, Key, Value>) {
         unsafe {
-            self.root.drop(self.height);
+            self.root.drop(self.height, self.config.max_children);
         }
         self.root = new_root;
     }
 
     /// Inserts an entry into a node at the given level.
     unsafe fn insert_entry(&mut self, level: usize, entry: NodeEntry<N, D, Key, Value>) {
-        if let Some(new_node_ref) = unsafe {
+        if let Some(new_node) = unsafe {
             self.root.insert_entry(
                 self.config.max_children,
                 self.config.min_children,
@@ -471,17 +119,13 @@ where
                 entry,
             )
         } {
-            let bounds = min_bounds(&self.root.bounds, &new_node_ref.bounds);
-            let mut next_root_children: Vec<NodeRef<N, D, Key, Value>> =
-                Vec::with_capacity(self.config.max_children);
-            next_root_children.push(self.root.take(self.height));
-            next_root_children.push(new_node_ref);
-            self.set_root(NodeRef {
-                bounds,
-                node: Node {
-                    inner: ManuallyDrop::new(next_root_children),
-                },
-            });
+            let ops = FSVecOps::<Node<N, D, Key, Value>>::new_ops(self.config.max_children);
+            let bounds = min_bounds(&self.root.bounds, &new_node.bounds);
+            // Pointer tricks used to move root node into itself
+            let mut next_root_children = ops.new();
+            ops.push(&mut next_root_children, ptr::read(&self.root));
+            ops.push(&mut next_root_children, new_node);
+            ptr::write(&mut self.root, Node::new(bounds, next_root_children));
             self.height += 1;
         }
     }
@@ -498,10 +142,11 @@ where
         Value: Eq,
     {
         let height = self.height;
-        let mut reinsert_nodes: Box<[Option<Node<N, D, Key, Value>>]> =
+        let mut reinsert_nodes: Box<[Option<FSVecData>]> =
             std::iter::repeat_with(|| None).take(height).collect();
         if unsafe {
             self.root.remove(
+                self.config.max_children,
                 self.config.min_children,
                 height,
                 key,
@@ -511,7 +156,9 @@ where
         } {
             // If root is an inner node with only one child, that child becomes the new root
             if height > 0 {
-                if let Some(new_root) = unsafe { self.root.take_single_inner_child() } {
+                if let Some(new_root) =
+                    unsafe { self.root.take_single_inner_child(self.config.max_children) }
+                {
                     self.set_root(new_root);
                     self.height -= 1;
                 }
@@ -519,8 +166,9 @@ where
 
             // reinsert entries at leaf level
             if height > 0 {
-                if let Some(node) = reinsert_nodes[0].take() {
-                    let children = ManuallyDrop::into_inner(unsafe { node.leaf });
+                if let Some(children) = reinsert_nodes[0].take() {
+                    let ops = FSVecOps::<(Key, Value)>::new_ops(self.config.max_children);
+                    let children = unsafe { ops.wrap(children) };
                     for leaf_entry in children.into_iter() {
                         unsafe {
                             self.insert_entry(0, NodeEntry::Leaf(leaf_entry));
@@ -531,8 +179,9 @@ where
 
             // reinsert entries at inner levels
             for level in 1..height {
-                if let Some(node) = reinsert_nodes[level].take() {
-                    let children = ManuallyDrop::into_inner(unsafe { node.inner });
+                if let Some(children) = reinsert_nodes[level].take() {
+                    let ops = FSVecOps::<Node<N, D, Key, Value>>::new_ops(self.config.max_children);
+                    let children = unsafe { ops.wrap(children) };
                     for inner_entry in children.into_iter() {
                         unsafe {
                             self.insert_entry(level, NodeEntry::Inner(inner_entry));
@@ -550,11 +199,9 @@ where
     where
         N: Debug,
     {
-        LNodeRef {
-            level: self.height,
-            value: &self.root,
+        unsafe {
+            self.root.debug_assert_bvh(self.height);
         }
-        .debug_assert_bvh();
     }
 }
 
@@ -674,7 +321,7 @@ mod tests {
         }
 
         unsafe {
-            assert!(tree.root.node.inner.is_empty());
+            assert!(tree.root.children.len() == 0);
         }
     }
 
@@ -799,8 +446,8 @@ mod tests {
     #[test]
     fn cosmic() -> Result<(), Box<dyn Error>> {
         let mut stars = RTree::<N32, 3, Vector<N32, 3>, StarInfo>::new(Config {
-            min_children: 4,
-            max_children: 2,
+            min_children: 2,
+            max_children: 4,
         });
 
         let file = File::open("./hygdata_v3.csv");
