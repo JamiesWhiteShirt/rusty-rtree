@@ -128,7 +128,7 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
         entry: NodeEntry<N, D, Key, Value>,
     ) -> Option<Node<N, D, Key, Value>>
     where
-        N: Ord + Clone + Sub<Output = N> + Into<f64>,
+        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
         Key: Bounded<N, D>,
     {
         if depth > 0 {
@@ -139,10 +139,17 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
                 &entry.bounds(),
             )
             .unwrap();
-            if let Some(new_node_ref) =
+            if let Some(new_child) =
                 insert_child.insert_entry(max_children, min_children, depth - 1, entry)
             {
-                self.insert_self_entry(min_children, ops, new_node_ref)
+                // The child node split, so the entries in new_child are no longer part of self
+                // Recompute the bounds of self before trying to insert new_child into self
+                self.bounds = min_bounds_all(
+                    ops.as_slice(&self.children)
+                        .iter()
+                        .map(|child| child.bounds()),
+                );
+                self.insert_self_entry(min_children, ops, new_child)
             } else {
                 self.bounds = min_bounds(&self.bounds, &insert_child.bounds);
                 None
