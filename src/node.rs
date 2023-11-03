@@ -230,6 +230,35 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
         }
     }
 
+    pub(crate) unsafe fn clone(&self, max_children: usize, level: usize) -> Self
+    where
+        N: Clone,
+        Key: Clone,
+        Value: Clone,
+    {
+        if level > 0 {
+            let ops = FSVecOps::<Node<N, D, Key, Value>>::new_ops(max_children);
+            let mut clone_children = ops.new();
+            for child in ops.as_slice(&self.children) {
+                ops.push(&mut clone_children, child.clone(max_children, level - 1));
+            }
+            Node {
+                bounds: self.bounds.clone(),
+                children: clone_children,
+
+                _phantom: PhantomData,
+            }
+        } else {
+            let ops = FSVecOps::<(Key, Value)>::new_ops(max_children);
+            Node {
+                bounds: self.bounds.clone(),
+                children: unsafe { ops.clone(&self.children) },
+
+                _phantom: PhantomData,
+            }
+        }
+    }
+
     pub(crate) unsafe fn debug_assert_bvh(&self, level: usize) -> Bounds<N, D>
     where
         Key: Bounded<N, D>,
@@ -245,8 +274,31 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
                 fs_vec::Iter::<(Key, Value)>::new(&self.children).map(|(key, _)| key.bounds()),
             )
         };
-        assert_eq!(bounds, self.bounds);
+        assert_eq!(self.bounds, bounds);
         bounds
+    }
+
+    pub(crate) unsafe fn debug_assert_eq(a: &Self, b: &Self, level: usize)
+    where
+        N: Debug + Eq,
+        Key: Debug + Eq,
+        Value: Debug + Eq,
+    {
+        assert_eq!(a.bounds, b.bounds);
+        if level > 0 {
+            let ops = FSVecOps::<Node<N, D, Key, Value>>::new_ops(usize::MAX);
+            let a_children = ops.as_slice(&b.children);
+            let b_children = ops.as_slice(&b.children);
+            assert_eq!(a_children.len(), b_children.len());
+            for (a_child, b_child) in a_children.iter().zip(b_children.iter()) {
+                Self::debug_assert_eq(a_child, b_child, level - 1);
+            }
+        } else {
+            let ops = FSVecOps::<(Key, Value)>::new_ops(usize::MAX);
+            let self_children = ops.as_slice(&a.children);
+            let other_children = ops.as_slice(&b.children);
+            assert_eq!(self_children, other_children);
+        }
     }
 }
 

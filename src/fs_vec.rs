@@ -137,6 +137,17 @@ impl<T> FSVecOps<T> {
             ops: self,
         }
     }
+
+    pub(crate) unsafe fn clone(self, vec: &FSVecData) -> FSVecData
+    where
+        T: Clone,
+    {
+        let mut new = self.new();
+        for value in self.as_slice(&vec) {
+            self.push(&mut new, value.clone());
+        }
+        new
+    }
 }
 
 pub(crate) struct Iter<'a, T: 'a> {

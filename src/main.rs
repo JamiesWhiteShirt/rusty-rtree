@@ -24,7 +24,7 @@ fn main() {
     println!("Hello, world!");
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Config {
     pub max_children: usize,
     pub min_children: usize,
@@ -94,6 +94,22 @@ where
             root: Node::new(empty_bounds(), unsafe { ops.new() }),
             config,
         };
+    }
+}
+
+impl<N, const D: usize, Key, Value> Clone for RTree<N, D, Key, Value>
+where
+    N: Clone,
+    Key: Clone,
+    Value: Clone,
+{
+    fn clone(&self) -> Self {
+        let ops = FSVecOps::<(Key, Value)>::new_ops(self.config.max_children);
+        RTree {
+            height: self.height,
+            root: unsafe { self.root.clone(self.config.max_children, self.height) },
+            config: self.config,
+        }
     }
 }
 
@@ -203,6 +219,17 @@ where
             self.root.debug_assert_bvh(self.height);
         }
     }
+
+    fn debug_assert_eq(a: &Self, b: &Self)
+    where
+        N: Debug + Eq,
+        Key: Debug + Eq,
+        Value: Debug + Eq,
+    {
+        assert_eq!(a.config, b.config);
+        assert_eq!(a.height, b.height);
+        unsafe { Node::<N, D, Key, Value>::debug_assert_eq(&a.root, &b.root, a.height) }
+    }
 }
 
 #[cfg(test)]
@@ -282,6 +309,32 @@ mod tests {
             },
             (),
         );
+    }
+
+    #[test]
+    fn clone() {
+        let mut tree: RTree<i32, 2, Bounds<i32, 2>, i32> =
+            RTree::<i32, 2, Bounds<i32, 2>, i32>::new(Config {
+                max_children: 4,
+                min_children: 2,
+            });
+
+        {
+            let mut rng = StdRng::from_seed([
+                0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD,
+                0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
+                0xDE, 0xAD, 0xBE, 0xEF,
+            ]);
+            for i in 0..1000 {
+                let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
+                let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
+                tree.insert(Bounds { min, max }, i);
+                tree.debug_assert_bvh();
+            }
+        }
+
+        let clone = tree.clone();
+        RTree::<i32, 2, Bounds<i32, 2>, i32>::debug_assert_eq(&tree, &clone);
     }
 
     #[test]
