@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     iter::Sum,
     ops::{Add, AddAssign, Index, IndexMut, Mul, Sub},
 };
@@ -11,7 +12,7 @@ use crate::{
     sphere::Sphere,
 };
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Vector<S, const D: usize>(pub [S; D]);
 
 impl<S, const D: usize> Eq for Vector<S, D> where S: Eq {}
@@ -111,5 +112,14 @@ impl<S: Ord + Clone, const D: usize> Bounded<S, D> for Vector<S, D> {
             min: self.clone(),
             max: self.clone(),
         }
+    }
+}
+
+impl<S, const D: usize> Debug for Vector<S, D>
+where
+    S: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.0.iter()).finish()
     }
 }
