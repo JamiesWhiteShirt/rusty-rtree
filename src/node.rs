@@ -1,4 +1,4 @@
-use std::{cell::UnsafeCell, fmt::Debug, marker::PhantomData, ops::Sub, ptr};
+use std::{fmt::Debug, marker::PhantomData, ops::Sub, ptr};
 
 use crate::{
     bounds::{empty_bounds, min_bounds, min_bounds_all, Bounded, Bounds},
@@ -256,7 +256,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     {
         let entry_bounds = entry.bounds();
         if depth > 0 {
-            let insert_child = NodeRefMut::new(
+            let mut insert_child = NodeRefMut::new(
                 self,
                 depth - 1,
                 select::minimal_volume_increase(
@@ -400,7 +400,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
 pub(crate) struct NodeRefMut<'a, 'b, N, const D: usize, Key, Value> {
     ops: &'a NodeOps<N, D, Key, Value>,
     level: usize,
-    node: UnsafeCell<&'b mut Node<N, D, Key, Value>>,
+    node: &'b mut Node<N, D, Key, Value>,
 }
 
 impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value> {
@@ -412,23 +412,23 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
         NodeRefMut {
             ops,
             level,
-            node: UnsafeCell::new(node),
+            node: node,
         }
     }
 
-    unsafe fn take_single_inner_child(&self) -> Option<NodeContainer<N, D, Key, Value>>
+    unsafe fn take_single_inner_child(&mut self) -> Option<NodeContainer<N, D, Key, Value>>
     where
         N: num_traits::Bounded,
     {
         unsafe {
             self.ops
-                .take_single_inner_child(&mut *self.node.get())
+                .take_single_inner_child(&mut self.node)
                 .map(|child| NodeContainer::new(self.ops, self.level - 1, child))
         }
     }
 
     fn insert(
-        &self,
+        &mut self,
         min_children: usize,
         entry: NodeEntry<'a, N, D, Key, Value>,
     ) -> Option<NodeContainer<'a, N, D, Key, Value>>
@@ -438,13 +438,13 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
     {
         unsafe {
             self.ops
-                .insert(&mut *self.node.get(), min_children, self.level, entry)
+                .insert(&mut self.node, min_children, self.level, entry)
                 .map(|node| NodeContainer::new(self.ops, self.level, node))
         }
     }
 
     fn remove(
-        &self,
+        &mut self,
         min_children: usize,
         key: &Key,
         value: &Value,
@@ -457,7 +457,7 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
     {
         unsafe {
             self.ops.remove(
-                &mut *self.node.get(),
+                &mut self.node,
                 min_children,
                 self.level,
                 key,
