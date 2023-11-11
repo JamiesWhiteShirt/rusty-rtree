@@ -33,7 +33,7 @@ pub(crate) struct Node<N, const D: usize, Key, Value> {
 }
 
 impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
-    pub(crate) fn new(bounds: Bounds<N, D>, children: FSVecData) -> Self {
+    pub(crate) unsafe fn new(bounds: Bounds<N, D>, children: FSVecData, _level: usize) -> Self {
         Node {
             bounds,
             children,
@@ -104,6 +104,24 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
             assert_eq!(self_children, other_children);
         }
     }
+
+    pub(crate) unsafe fn debug_assert_min_children(
+        &self,
+        level: usize,
+        min_children: usize,
+        is_root: bool,
+    ) {
+        if !is_root {
+            assert!(self.children.len() >= min_children);
+        }
+        if level > 0 {
+            let ops = FSVecOps::<Node<N, D, Key, Value>>::new_ops(usize::MAX);
+            let children = ops.as_slice(&self.children);
+            for child in children {
+                child.debug_assert_min_children(level - 1, min_children, false);
+            }
+        }
+    }
 }
 
 pub(crate) struct NodeOps<N, const D: usize, Key, Value> {
@@ -123,24 +141,14 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     where
         N: num_traits::Bounded,
     {
-        Node {
-            bounds: empty_bounds(),
-            children: self.leaf.new(),
-
-            _phantom: PhantomData,
-        }
+        Node::new(empty_bounds(), self.leaf.new(), 0)
     }
 
-    pub(crate) unsafe fn new_inner(&self) -> Node<N, D, Key, Value>
+    pub(crate) unsafe fn new_inner(&self, level: usize) -> Node<N, D, Key, Value>
     where
         N: num_traits::Bounded,
     {
-        Node {
-            bounds: empty_bounds(),
-            children: self.inner.new(),
-
-            _phantom: PhantomData,
-        }
+        Node::new(empty_bounds(), self.inner.new(), level)
     }
 
     pub(crate) unsafe fn take_leaf_children(
@@ -164,6 +172,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     pub(crate) unsafe fn branch(
         &self,
         root: &mut Node<N, D, Key, Value>,
+        level: usize,
         sibling: Node<N, D, Key, Value>,
     ) where
         N: Ord + Clone + Sub<Output = N> + Into<f64>,
@@ -172,7 +181,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         let mut next_root_children = self.inner.new();
         self.inner.push(&mut next_root_children, ptr::read(root));
         self.inner.push(&mut next_root_children, sibling);
-        ptr::write(root, Node::new(bounds, next_root_children));
+        ptr::write(root, Node::new(bounds, next_root_children, level));
     }
 
     pub(crate) unsafe fn take_single_inner_child(
@@ -193,6 +202,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     unsafe fn self_insert<'a>(
         &self,
         node: &'a mut Node<N, D, Key, Value>,
+        level: usize,
         min_children: usize,
         entry: NodeEntry<'a, N, D, Key, Value>,
     ) -> Option<Node<N, D, Key, Value>>
@@ -215,12 +225,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                         &mut node.children,
                     );
                     node.bounds = new_bounds;
-                    Some(Node {
-                        bounds: sibling_bounds,
-                        children: sibling_children,
-
-                        _phantom: PhantomData,
-                    })
+                    Some(Node::new(sibling_bounds, sibling_children, level))
                 }
             }
             NodeEntry::Leaf(entry) => {
@@ -232,12 +237,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                     let (new_bounds, sibling_bounds, sibling_children) =
                         split::quadratic_n(min_children, &self.leaf, entry, &mut node.children);
                     node.bounds = new_bounds;
-                    Some(Node {
-                        bounds: sibling_bounds,
-                        children: sibling_children,
-
-                        _phantom: PhantomData,
-                    })
+                    Some(Node::new(sibling_bounds, sibling_children, level))
                 }
             }
         }
@@ -246,6 +246,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     pub(crate) unsafe fn insert<'a>(
         &self,
         node: &'a mut Node<N, D, Key, Value>,
+        level: usize,
         min_children: usize,
         depth: usize,
         entry: NodeEntry<'a, N, D, Key, Value>,
@@ -274,13 +275,13 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                         .iter()
                         .map(|child| child.bounds()),
                 );
-                self.self_insert(node, min_children, NodeEntry::Inner(new_child))
+                self.self_insert(node, level, min_children, NodeEntry::Inner(new_child))
             } else {
                 node.bounds = min_bounds(&node.bounds, &entry_bounds);
                 None
             }
         } else {
-            self.self_insert(node, min_children, entry)
+            self.self_insert(node, level, min_children, entry)
         }
     }
 
@@ -380,19 +381,9 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                 self.inner
                     .push(&mut clone_children, self.clone(child, level - 1));
             }
-            Node {
-                bounds: node.bounds.clone(),
-                children: clone_children,
-
-                _phantom: PhantomData,
-            }
+            Node::new(node.bounds.clone(), clone_children, level)
         } else {
-            Node {
-                bounds: node.bounds.clone(),
-                children: unsafe { self.leaf.clone(&node.children) },
-
-                _phantom: PhantomData,
-            }
+            Node::new(node.bounds.clone(), self.leaf.clone(&node.children), level)
         }
     }
 }
@@ -438,7 +429,7 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
     {
         unsafe {
             self.ops
-                .insert(&mut self.node, min_children, self.level, entry)
+                .insert(&mut self.node, self.level, min_children, self.level, entry)
                 .map(|node| NodeContainer::new(self.ops, self.level, node))
         }
     }
@@ -505,7 +496,7 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<'a, N, D, Key, Value> {
     {
         unsafe {
             self.ops
-                .insert(&mut self.node, min_children, self.level, entry)
+                .insert(&mut self.node, self.level, min_children, self.level, entry)
                 .map(|node| NodeContainer::new(self.ops, self.level, node))
         }
     }

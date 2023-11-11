@@ -135,12 +135,13 @@ where
         if let Some(sibling) = unsafe {
             ops.insert(
                 &mut self.root,
+                self.height,
                 self.config.min_children,
                 self.height - level,
                 entry,
             )
         } {
-            ops.branch(&mut self.root, sibling);
+            ops.branch(&mut self.root, self.height, sibling);
             self.height += 1;
         }
     }
@@ -228,6 +229,16 @@ where
         assert_eq!(a.config, b.config);
         assert_eq!(a.height, b.height);
         unsafe { Node::<N, D, Key, Value>::debug_assert_eq(&a.root, &b.root, a.height) }
+    }
+
+    fn debug_assert_min_children(&self)
+    where
+        N: Debug,
+    {
+        unsafe {
+            self.root
+                .debug_assert_min_children(self.height, self.config.min_children, true);
+        }
     }
 }
 
@@ -355,6 +366,7 @@ mod tests {
                 let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
                 tree.insert(Bounds { min, max }, i);
                 tree.debug_assert_bvh();
+                tree.debug_assert_min_children();
             }
         }
 
@@ -372,9 +384,7 @@ mod tests {
             }
         }
 
-        unsafe {
-            assert!(tree.root.children.len() == 0);
-        }
+        assert!(tree.root.children.len() == 0);
     }
 
     fn do_insert_bench(bencher: &mut Bencher, max_children: usize) {
@@ -498,8 +508,8 @@ mod tests {
     #[test]
     fn cosmic() -> Result<(), Box<dyn Error>> {
         let mut stars = RTree::<N32, 3, Vector<N32, 3>, StarInfo>::new(Config {
-            min_children: 2,
-            max_children: 4,
+            min_children: 4,
+            max_children: 32,
         });
 
         let file = File::open("./hygdata_v3.csv");
@@ -514,6 +524,9 @@ mod tests {
             stars.insert(pos, info);
         }
 
+        stars.debug_assert_bvh();
+        stars.debug_assert_min_children();
+
         let space: Sphere<N32, 3> = Sphere {
             center: sol_pos,
             radius: n32(100.0),
@@ -525,7 +538,7 @@ mod tests {
 
         let mut star_lines = RTree::<N32, 3, Line<N32, 3>, ()>::new(Config {
             min_children: 4,
-            max_children: 2,
+            max_children: 32,
         });
 
         for (pos, info) in stars.filter_iter(BoundedIntersectionFilter::new(space)) {
@@ -535,6 +548,9 @@ mod tests {
 
             star_lines.insert(Line(sol_pos, *pos), ())
         }
+
+        star_lines.debug_assert_bvh();
+        star_lines.debug_assert_min_children();
 
         Ok(())
     }
