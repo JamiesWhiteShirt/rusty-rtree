@@ -17,11 +17,20 @@ impl FSVecData {
     }
 }
 
-#[derive(Clone, Copy)]
 pub(crate) struct FSVecOps<T> {
     cap: usize,
 
     _phantom: PhantomData<T>,
+}
+
+impl<T> Copy for FSVecOps<T> {}
+impl<T> Clone for FSVecOps<T> {
+    fn clone(&self) -> Self {
+        FSVecOps {
+            cap: self.cap,
+            _phantom: PhantomData,
+        }
+    }
 }
 
 impl<T> FSVecOps<T> {

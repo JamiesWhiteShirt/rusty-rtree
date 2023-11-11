@@ -13,12 +13,11 @@ mod sphere;
 mod split;
 mod vector;
 
-use bounds::{empty_bounds, min_bounds, Bounded};
+use bounds::Bounded;
 use filter::SpatialFilter;
-use fs_vec::{FSVecData, FSVecOps};
 use iter::FilterIter;
-use node::{Node, NodeEntry, NodeRef};
-use std::{fmt::Debug, ops::Sub, ptr};
+use node::{Node, NodeContainer, NodeEntry, NodeOps, NodeRef};
+use std::{fmt::Debug, ops::Sub};
 
 fn main() {
     println!("Hello, world!");
@@ -43,17 +42,21 @@ where
     Value: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
         f.debug_struct("RTree")
             .field("config", &self.config)
-            .field("root", &NodeRef::new(self.height, &self.root))
+            .field("root", unsafe {
+                &NodeRef::new(&ops, self.height, &self.root)
+            })
             .finish()
     }
 }
 
 impl<N, const D: usize, Key, Value> Drop for RTree<N, D, Key, Value> {
     fn drop(&mut self) {
+        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
         unsafe {
-            self.root.drop(self.height, self.config.max_children);
+            ops.drop(&mut self.root, self.height);
         }
     }
 }
@@ -88,10 +91,10 @@ where
     }
 
     pub fn new(config: Config) -> RTree<N, D, Key, Value> {
-        let ops = FSVecOps::<(Key, Value)>::new_ops(config.max_children);
+        let ops = NodeOps::<N, D, Key, Value>::new_ops(config.max_children);
         return RTree {
             height: 0,
-            root: Node::new(empty_bounds(), unsafe { ops.new() }),
+            root: unsafe { ops.new_inner() },
             config,
         };
     }
@@ -104,10 +107,10 @@ where
     Value: Clone,
 {
     fn clone(&self) -> Self {
-        let ops = FSVecOps::<(Key, Value)>::new_ops(self.config.max_children);
+        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
         RTree {
             height: self.height,
-            root: unsafe { self.root.clone(self.config.max_children, self.height) },
+            root: unsafe { ops.clone(&self.root, self.height) },
             config: self.config,
         }
     }
@@ -119,29 +122,25 @@ where
     Key: Bounded<N, D>,
 {
     fn set_root(&mut self, new_root: Node<N, D, Key, Value>) {
+        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
         unsafe {
-            self.root.drop(self.height, self.config.max_children);
+            ops.drop(&mut self.root, self.height);
         }
         self.root = new_root;
     }
 
     /// Inserts an entry into a node at the given level.
     unsafe fn insert_entry(&mut self, level: usize, entry: NodeEntry<N, D, Key, Value>) {
-        if let Some(new_node) = unsafe {
-            self.root.insert_entry(
-                self.config.max_children,
+        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
+        if let Some(sibling) = unsafe {
+            ops.insert(
+                &mut self.root,
                 self.config.min_children,
                 self.height - level,
                 entry,
             )
         } {
-            let ops = FSVecOps::<Node<N, D, Key, Value>>::new_ops(self.config.max_children);
-            let bounds = min_bounds(&self.root.bounds, &new_node.bounds);
-            // Pointer tricks used to move root node into itself
-            let mut next_root_children = ops.new();
-            ops.push(&mut next_root_children, ptr::read(&self.root));
-            ops.push(&mut next_root_children, new_node);
-            ptr::write(&mut self.root, Node::new(bounds, next_root_children));
+            ops.branch(&mut self.root, sibling);
             self.height += 1;
         }
     }
@@ -157,24 +156,23 @@ where
         Key: Eq,
         Value: Eq,
     {
+        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
         let height = self.height;
-        let mut reinsert_nodes: Box<[Option<FSVecData>]> =
+        let mut underfull_nodes: Box<[Option<Node<N, D, Key, Value>>]> =
             std::iter::repeat_with(|| None).take(height).collect();
         if unsafe {
-            self.root.remove(
-                self.config.max_children,
+            ops.remove(
+                &mut self.root,
                 self.config.min_children,
                 height,
                 key,
                 value,
-                &mut reinsert_nodes,
+                &mut underfull_nodes,
             )
         } {
             // If root is an inner node with only one child, that child becomes the new root
             if height > 0 {
-                if let Some(new_root) =
-                    unsafe { self.root.take_single_inner_child(self.config.max_children) }
-                {
+                if let Some(new_root) = unsafe { ops.take_single_inner_child(&mut self.root) } {
                     self.set_root(new_root);
                     self.height -= 1;
                 }
@@ -182,9 +180,8 @@ where
 
             // reinsert entries at leaf level
             if height > 0 {
-                if let Some(children) = reinsert_nodes[0].take() {
-                    let ops = FSVecOps::<(Key, Value)>::new_ops(self.config.max_children);
-                    let children = unsafe { ops.wrap(children) };
+                if let Some(undefull_leaf) = underfull_nodes[0].take() {
+                    let children = unsafe { ops.take_leaf_children(undefull_leaf) };
                     for leaf_entry in children.into_iter() {
                         unsafe {
                             self.insert_entry(0, NodeEntry::Leaf(leaf_entry));
@@ -195,12 +192,14 @@ where
 
             // reinsert entries at inner levels
             for level in 1..height {
-                if let Some(children) = reinsert_nodes[level].take() {
-                    let ops = FSVecOps::<Node<N, D, Key, Value>>::new_ops(self.config.max_children);
-                    let children = unsafe { ops.wrap(children) };
-                    for inner_entry in children.into_iter() {
+                if let Some(children) = underfull_nodes[level].take() {
+                    let children = unsafe { ops.take_inner_children(children) };
+                    for node in children.into_iter() {
                         unsafe {
-                            self.insert_entry(level, NodeEntry::Inner(inner_entry));
+                            self.insert_entry(
+                                level,
+                                NodeEntry::Inner(NodeContainer::new(&ops, level - 1, node)),
+                            );
                         }
                     }
                 }

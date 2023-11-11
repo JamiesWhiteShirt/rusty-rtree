@@ -1,25 +1,25 @@
-use std::{fmt::Debug, marker::PhantomData, ops::Sub};
+use std::{cell::UnsafeCell, fmt::Debug, marker::PhantomData, ops::Sub, ptr};
 
 use crate::{
     bounds::{empty_bounds, min_bounds, min_bounds_all, Bounded, Bounds},
-    fs_vec::{self, FSVecData, FSVecOps},
+    fs_vec::{self, FSVec, FSVecData, FSVecOps},
     intersects::Intersects,
     select, split,
 };
 
-pub(crate) enum NodeEntry<N, const D: usize, Key, Value> {
-    Inner(Node<N, D, Key, Value>),
+pub(crate) enum NodeEntry<'a, N, const D: usize, Key, Value> {
+    Inner(NodeContainer<'a, N, D, Key, Value>),
     Leaf((Key, Value)),
 }
 
-impl<N, const D: usize, Key, Value> Bounded<N, D> for NodeEntry<N, D, Key, Value>
+impl<'a, N, const D: usize, Key, Value> Bounded<N, D> for NodeEntry<'a, N, D, Key, Value>
 where
     N: Clone,
     Key: Bounded<N, D>,
 {
     fn bounds(&self) -> Bounds<N, D> {
         match self {
-            NodeEntry::Inner(node_ref) => node_ref.bounds(),
+            NodeEntry::Inner(node_container) => node_container.node.bounds(),
             NodeEntry::Leaf((key, _)) => key.bounds(),
         }
     }
@@ -63,202 +63,6 @@ where
 }
 
 impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
-    pub(crate) unsafe fn drop(&mut self, level: usize, max_children: usize) {
-        if level > 0 {
-            let ops = FSVecOps::<Node<N, D, Key, Value>>::new_ops(max_children);
-            for child in ops.as_slice_mut(&mut self.children) {
-                child.drop(level - 1, max_children);
-            }
-            ops.drop(&mut self.children);
-        } else {
-            let ops = FSVecOps::<(Key, Value)>::new_ops(max_children);
-            ops.drop(&mut self.children);
-        }
-    }
-
-    pub(crate) unsafe fn take_single_inner_child(
-        &mut self,
-        max_children: usize,
-    ) -> Option<Node<N, D, Key, Value>>
-    where
-        N: num_traits::Bounded,
-    {
-        if self.children.len() == 1 {
-            let ops = FSVecOps::<Node<N, D, Key, Value>>::new_ops(max_children);
-            self.bounds = empty_bounds();
-            Some(ops.remove(&mut self.children, 0))
-        } else {
-            None
-        }
-    }
-
-    unsafe fn insert_self_entry<T>(
-        &mut self,
-        min_children: usize,
-        ops: FSVecOps<T>,
-        entry: T,
-    ) -> Option<Self>
-    where
-        N: Ord + Clone + Sub<Output = N> + Into<f64>,
-        T: Bounded<N, D>,
-    {
-        let entry_bounds = entry.bounds();
-        if self.children.len() < ops.cap() {
-            ops.push(&mut self.children, entry);
-            self.bounds = min_bounds(&self.bounds, &entry_bounds);
-            None
-        } else {
-            let (self_bounds, new_bounds, new_children) =
-                split::quadratic_n(min_children, ops, entry, &mut self.children);
-            self.bounds = self_bounds;
-            Some(Node {
-                bounds: new_bounds,
-                children: new_children,
-
-                _phantom: PhantomData,
-            })
-        }
-    }
-
-    pub(crate) unsafe fn insert_entry(
-        &mut self,
-        max_children: usize,
-        min_children: usize,
-        depth: usize,
-        entry: NodeEntry<N, D, Key, Value>,
-    ) -> Option<Node<N, D, Key, Value>>
-    where
-        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-        Key: Bounded<N, D>,
-    {
-        if depth > 0 {
-            let ops = FSVecOps::<Node<N, D, Key, Value>>::new_ops(max_children);
-
-            let insert_child = select::minimal_volume_increase(
-                ops.as_slice_mut(&mut self.children),
-                &entry.bounds(),
-            )
-            .unwrap();
-            if let Some(new_child) =
-                insert_child.insert_entry(max_children, min_children, depth - 1, entry)
-            {
-                // The child node split, so the entries in new_child are no longer part of self
-                // Recompute the bounds of self before trying to insert new_child into self
-                self.bounds = min_bounds_all(
-                    ops.as_slice(&self.children)
-                        .iter()
-                        .map(|child| child.bounds()),
-                );
-                self.insert_self_entry(min_children, ops, new_child)
-            } else {
-                self.bounds = min_bounds(&self.bounds, &insert_child.bounds);
-                None
-            }
-        } else {
-            match entry {
-                NodeEntry::Inner(entry) => {
-                    self.insert_self_entry(min_children, FSVecOps::new_ops(max_children), entry)
-                }
-                NodeEntry::Leaf(entry) => {
-                    self.insert_self_entry(min_children, FSVecOps::new_ops(max_children), entry)
-                }
-            }
-        }
-    }
-
-    pub(crate) unsafe fn remove(
-        &mut self,
-        max_children: usize,
-        min_children: usize,
-        level: usize,
-        key: &Key,
-        value: &Value,
-        reinsert_nodes: &mut [Option<FSVecData>],
-    ) -> bool
-    where
-        N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-        Key: Bounded<N, D> + Eq,
-        Value: Eq,
-    {
-        if level > 0 {
-            let ops = FSVecOps::<Node<N, D, Key, Value>>::new_ops(max_children);
-            let mut i = self.children.len();
-            while i > 0 {
-                i -= 1;
-                if ops.at(&self.children, i).bounds.intersects(&key.bounds())
-                    && ops.at_mut(&mut self.children, i).remove(
-                        max_children,
-                        min_children,
-                        level - 1,
-                        key,
-                        value,
-                        reinsert_nodes,
-                    )
-                {
-                    if ops.at(&self.children, i).children.len() < min_children {
-                        let removed_child = ops.swap_remove(&mut self.children, i);
-                        reinsert_nodes[level - 1] = Some(removed_child.children);
-                    }
-
-                    self.bounds = min_bounds_all(
-                        ops.as_slice(&self.children)
-                            .iter()
-                            .map(|child| child.bounds()),
-                    );
-
-                    return true;
-                }
-            }
-            return false;
-        } else {
-            let ops = FSVecOps::<(Key, Value)>::new_ops(max_children);
-            let index = ops
-                .as_slice(&self.children)
-                .iter()
-                .position(|(k, v)| k == key && v == value);
-            if let Some(i) = index {
-                ops.swap_remove(&mut self.children, i);
-                self.bounds = min_bounds_all(
-                    ops.as_slice(&self.children)
-                        .iter()
-                        .map(|(key, _)| key.bounds()),
-                );
-
-                return true;
-            }
-            return false;
-        }
-    }
-
-    pub(crate) unsafe fn clone(&self, max_children: usize, level: usize) -> Self
-    where
-        N: Clone,
-        Key: Clone,
-        Value: Clone,
-    {
-        if level > 0 {
-            let ops = FSVecOps::<Node<N, D, Key, Value>>::new_ops(max_children);
-            let mut clone_children = ops.new();
-            for child in ops.as_slice(&self.children) {
-                ops.push(&mut clone_children, child.clone(max_children, level - 1));
-            }
-            Node {
-                bounds: self.bounds.clone(),
-                children: clone_children,
-
-                _phantom: PhantomData,
-            }
-        } else {
-            let ops = FSVecOps::<(Key, Value)>::new_ops(max_children);
-            Node {
-                bounds: self.bounds.clone(),
-                children: unsafe { ops.clone(&self.children) },
-
-                _phantom: PhantomData,
-            }
-        }
-    }
-
     pub(crate) unsafe fn debug_assert_bvh(&self, level: usize) -> Bounds<N, D>
     where
         Key: Bounded<N, D>,
@@ -302,18 +106,473 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
     }
 }
 
-pub(crate) struct NodeRef<'a, N, const D: usize, Key, Value> {
-    level: usize,
-    node: &'a Node<N, D, Key, Value>,
+pub(crate) struct NodeOps<N, const D: usize, Key, Value> {
+    leaf: FSVecOps<(Key, Value)>,
+    inner: FSVecOps<Node<N, D, Key, Value>>,
 }
 
-impl<'a, N, const D: usize, Key, Value> NodeRef<'a, N, D, Key, Value> {
-    pub(crate) fn new(level: usize, node: &'a Node<N, D, Key, Value>) -> Self {
-        NodeRef { level, node }
+impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
+    pub(crate) fn new_ops(cap: usize) -> Self {
+        NodeOps {
+            leaf: FSVecOps::new_ops(cap),
+            inner: FSVecOps::new_ops(cap),
+        }
+    }
+
+    pub(crate) unsafe fn new_leaf(&self) -> Node<N, D, Key, Value>
+    where
+        N: num_traits::Bounded,
+    {
+        Node {
+            bounds: empty_bounds(),
+            children: self.leaf.new(),
+
+            _phantom: PhantomData,
+        }
+    }
+
+    pub(crate) unsafe fn new_inner(&self) -> Node<N, D, Key, Value>
+    where
+        N: num_traits::Bounded,
+    {
+        Node {
+            bounds: empty_bounds(),
+            children: self.inner.new(),
+
+            _phantom: PhantomData,
+        }
+    }
+
+    pub(crate) unsafe fn take_leaf_children(
+        &self,
+        node: Node<N, D, Key, Value>,
+    ) -> FSVec<(Key, Value)> {
+        self.leaf.wrap(node.children)
+    }
+
+    pub(crate) unsafe fn take_inner_children(
+        &self,
+        node: Node<N, D, Key, Value>,
+    ) -> FSVec<Node<N, D, Key, Value>> {
+        self.inner.wrap(node.children)
+    }
+
+    /*
+    Branches the root node into two nodes in-place, such that the previous root
+    node and the sibling node become children of the new root node.
+     */
+    pub(crate) unsafe fn branch(
+        &self,
+        root: &mut Node<N, D, Key, Value>,
+        sibling: Node<N, D, Key, Value>,
+    ) where
+        N: Ord + Clone + Sub<Output = N> + Into<f64>,
+    {
+        let bounds = min_bounds(&root.bounds, &sibling.bounds);
+        let mut next_root_children = self.inner.new();
+        self.inner.push(&mut next_root_children, ptr::read(root));
+        self.inner.push(&mut next_root_children, sibling);
+        ptr::write(root, Node::new(bounds, next_root_children));
+    }
+
+    pub(crate) unsafe fn take_single_inner_child(
+        &self,
+        node: &mut Node<N, D, Key, Value>,
+    ) -> Option<Node<N, D, Key, Value>>
+    where
+        N: num_traits::Bounded,
+    {
+        if node.children.len() == 1 {
+            node.bounds = empty_bounds();
+            Some(self.inner.remove(&mut node.children, 0))
+        } else {
+            None
+        }
+    }
+
+    unsafe fn self_insert<'a>(
+        &self,
+        node: &'a mut Node<N, D, Key, Value>,
+        min_children: usize,
+        entry: NodeEntry<'a, N, D, Key, Value>,
+    ) -> Option<Node<N, D, Key, Value>>
+    where
+        N: Ord + Clone + Sub<Output = N> + Into<f64>,
+        Key: Bounded<N, D>,
+    {
+        let entry_bounds = entry.bounds();
+        match entry {
+            NodeEntry::Inner(node_container) => {
+                if node.children.len() < self.inner.cap() {
+                    self.inner.push(&mut node.children, node_container.unwrap());
+                    node.bounds = min_bounds(&node.bounds, &entry_bounds);
+                    None
+                } else {
+                    let (new_bounds, sibling_bounds, sibling_children) = split::quadratic_n(
+                        min_children,
+                        &self.inner,
+                        node_container.unwrap(),
+                        &mut node.children,
+                    );
+                    node.bounds = new_bounds;
+                    Some(Node {
+                        bounds: sibling_bounds,
+                        children: sibling_children,
+
+                        _phantom: PhantomData,
+                    })
+                }
+            }
+            NodeEntry::Leaf(entry) => {
+                if node.children.len() < self.leaf.cap() {
+                    self.leaf.push(&mut node.children, entry);
+                    node.bounds = min_bounds(&node.bounds, &entry_bounds);
+                    None
+                } else {
+                    let (new_bounds, sibling_bounds, sibling_children) =
+                        split::quadratic_n(min_children, &self.leaf, entry, &mut node.children);
+                    node.bounds = new_bounds;
+                    Some(Node {
+                        bounds: sibling_bounds,
+                        children: sibling_children,
+
+                        _phantom: PhantomData,
+                    })
+                }
+            }
+        }
+    }
+
+    pub(crate) unsafe fn insert<'a>(
+        &self,
+        node: &'a mut Node<N, D, Key, Value>,
+        min_children: usize,
+        depth: usize,
+        entry: NodeEntry<'a, N, D, Key, Value>,
+    ) -> Option<Node<N, D, Key, Value>>
+    where
+        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+        Key: Bounded<N, D>,
+    {
+        let entry_bounds = entry.bounds();
+        if depth > 0 {
+            let insert_child = NodeRefMut::new(
+                self,
+                depth - 1,
+                select::minimal_volume_increase(
+                    self.inner.as_slice_mut(&mut node.children),
+                    &entry.bounds(),
+                )
+                .unwrap(),
+            );
+            if let Some(new_child) = insert_child.insert(min_children, entry) {
+                // The child node split, so the entries in new_child are no longer part of self
+                // Recompute the bounds of self before trying to insert new_child into self
+                node.bounds = min_bounds_all(
+                    self.inner
+                        .as_slice(&node.children)
+                        .iter()
+                        .map(|child| child.bounds()),
+                );
+                self.self_insert(node, min_children, NodeEntry::Inner(new_child))
+            } else {
+                node.bounds = min_bounds(&node.bounds, &entry_bounds);
+                None
+            }
+        } else {
+            self.self_insert(node, min_children, entry)
+        }
+    }
+
+    pub(crate) unsafe fn remove(
+        &self,
+        node: &mut Node<N, D, Key, Value>,
+        min_children: usize,
+        level: usize,
+        key: &Key,
+        value: &Value,
+        underfull_nodes: &mut [Option<Node<N, D, Key, Value>>],
+    ) -> bool
+    where
+        N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
+        Key: Bounded<N, D> + Eq,
+        Value: Eq,
+    {
+        if level > 0 {
+            let mut i = node.children.len();
+            while i > 0 {
+                i -= 1;
+                if self
+                    .inner
+                    .at(&node.children, i)
+                    .bounds
+                    .intersects(&key.bounds())
+                    && self.remove(
+                        self.inner.at_mut(&mut node.children, i),
+                        min_children,
+                        level - 1,
+                        key,
+                        value,
+                        underfull_nodes,
+                    )
+                {
+                    if self.inner.at(&node.children, i).children.len() < min_children {
+                        let removed_child = self.inner.swap_remove(&mut node.children, i);
+                        underfull_nodes[level - 1] = Some(removed_child);
+                    }
+
+                    node.bounds = min_bounds_all(
+                        self.inner
+                            .as_slice(&node.children)
+                            .iter()
+                            .map(|child| child.bounds()),
+                    );
+
+                    return true;
+                }
+            }
+            return false;
+        } else {
+            let index = self
+                .leaf
+                .as_slice(&node.children)
+                .iter()
+                .position(|(k, v)| k == key && v == value);
+            if let Some(i) = index {
+                self.leaf.swap_remove(&mut node.children, i);
+                node.bounds = min_bounds_all(
+                    self.leaf
+                        .as_slice(&node.children)
+                        .iter()
+                        .map(|(key, _)| key.bounds()),
+                );
+
+                return true;
+            }
+            return false;
+        }
+    }
+
+    pub(crate) unsafe fn drop(&self, node: &mut Node<N, D, Key, Value>, level: usize) {
+        if level > 0 {
+            for child in self.inner.as_slice_mut(&mut node.children) {
+                self.drop(child, level - 1);
+            }
+            self.inner.drop(&mut node.children);
+        } else {
+            self.leaf.drop(&mut node.children);
+        }
+    }
+
+    pub(crate) unsafe fn clone(
+        &self,
+        node: &Node<N, D, Key, Value>,
+        level: usize,
+    ) -> Node<N, D, Key, Value>
+    where
+        N: Clone,
+        Key: Clone,
+        Value: Clone,
+    {
+        if level > 0 {
+            let mut clone_children = self.inner.new();
+            for child in self.inner.as_slice(&node.children) {
+                self.inner
+                    .push(&mut clone_children, self.clone(child, level - 1));
+            }
+            Node {
+                bounds: node.bounds.clone(),
+                children: clone_children,
+
+                _phantom: PhantomData,
+            }
+        } else {
+            Node {
+                bounds: node.bounds.clone(),
+                children: unsafe { self.leaf.clone(&node.children) },
+
+                _phantom: PhantomData,
+            }
+        }
     }
 }
 
-impl<'a, N, const D: usize, Key, Value> Debug for NodeRef<'a, N, D, Key, Value>
+pub(crate) struct NodeRefMut<'a, 'b, N, const D: usize, Key, Value> {
+    ops: &'a NodeOps<N, D, Key, Value>,
+    level: usize,
+    node: UnsafeCell<&'b mut Node<N, D, Key, Value>>,
+}
+
+impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value> {
+    pub(crate) unsafe fn new(
+        ops: &'a NodeOps<N, D, Key, Value>,
+        level: usize,
+        node: &'b mut Node<N, D, Key, Value>,
+    ) -> Self {
+        NodeRefMut {
+            ops,
+            level,
+            node: UnsafeCell::new(node),
+        }
+    }
+
+    unsafe fn take_single_inner_child(&self) -> Option<NodeContainer<N, D, Key, Value>>
+    where
+        N: num_traits::Bounded,
+    {
+        unsafe {
+            self.ops
+                .take_single_inner_child(&mut *self.node.get())
+                .map(|child| NodeContainer::new(self.ops, self.level - 1, child))
+        }
+    }
+
+    fn insert(
+        &self,
+        min_children: usize,
+        entry: NodeEntry<'a, N, D, Key, Value>,
+    ) -> Option<NodeContainer<'a, N, D, Key, Value>>
+    where
+        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+        Key: Bounded<N, D>,
+    {
+        unsafe {
+            self.ops
+                .insert(&mut *self.node.get(), min_children, self.level, entry)
+                .map(|node| NodeContainer::new(self.ops, self.level, node))
+        }
+    }
+
+    fn remove(
+        &self,
+        min_children: usize,
+        key: &Key,
+        value: &Value,
+        underfull_nodes: &mut [Option<Node<N, D, Key, Value>>],
+    ) -> bool
+    where
+        N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
+        Key: Bounded<N, D> + Eq,
+        Value: Eq,
+    {
+        unsafe {
+            self.ops.remove(
+                &mut *self.node.get(),
+                min_children,
+                self.level,
+                key,
+                value,
+                underfull_nodes,
+            )
+        }
+    }
+}
+
+pub(crate) struct NodeContainer<'a, N, const D: usize, Key, Value> {
+    ops: &'a NodeOps<N, D, Key, Value>,
+    level: usize,
+    node: Node<N, D, Key, Value>,
+}
+
+impl<'a, N, const D: usize, Key, Value> NodeContainer<'a, N, D, Key, Value> {
+    pub(crate) unsafe fn new(
+        ops: &'a NodeOps<N, D, Key, Value>,
+        level: usize,
+        node: Node<N, D, Key, Value>,
+    ) -> Self {
+        NodeContainer { ops, level, node }
+    }
+
+    unsafe fn take_single_inner_child(&mut self) -> Option<NodeContainer<N, D, Key, Value>>
+    where
+        N: num_traits::Bounded,
+    {
+        unsafe {
+            self.ops
+                .take_single_inner_child(&mut self.node)
+                .map(|child| NodeContainer::new(self.ops, self.level - 1, child))
+        }
+    }
+
+    fn insert(
+        &mut self,
+        min_children: usize,
+        entry: NodeEntry<N, D, Key, Value>,
+    ) -> Option<NodeContainer<'a, N, D, Key, Value>>
+    where
+        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+        Key: Bounded<N, D>,
+    {
+        unsafe {
+            self.ops
+                .insert(&mut self.node, min_children, self.level, entry)
+                .map(|node| NodeContainer::new(self.ops, self.level, node))
+        }
+    }
+
+    fn remove(
+        &mut self,
+        min_children: usize,
+        key: &Key,
+        value: &Value,
+        underfully_nodes: &mut [Option<Node<N, D, Key, Value>>],
+    ) -> bool
+    where
+        N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
+        Key: Bounded<N, D> + Eq,
+        Value: Eq,
+    {
+        unsafe {
+            self.ops.remove(
+                &mut self.node,
+                min_children,
+                self.level,
+                key,
+                value,
+                underfully_nodes,
+            )
+        }
+    }
+
+    pub(crate) fn get_ref(&self) -> NodeRef<N, D, Key, Value> {
+        unsafe { NodeRef::new(self.ops, self.level, &self.node) }
+    }
+
+    pub(crate) fn get_ref_mut(&mut self) -> NodeRefMut<N, D, Key, Value> {
+        unsafe { NodeRefMut::new(self.ops, self.level, &mut self.node) }
+    }
+
+    /**
+    Unwraps the node from the container without dropping it.
+    */
+    pub(crate) unsafe fn unwrap(self) -> Node<N, D, Key, Value> {
+        let s = std::mem::ManuallyDrop::new(self);
+        std::ptr::read(&s.node)
+    }
+}
+
+impl<'a, N, const D: usize, Key, Value> Drop for NodeContainer<'a, N, D, Key, Value> {
+    fn drop(&mut self) {
+        unsafe { self.ops.drop(&mut self.node, self.level) }
+    }
+}
+
+impl<'a, N, const D: usize, Key, Value> Clone for NodeContainer<'a, N, D, Key, Value>
+where
+    N: Clone,
+    Key: Clone,
+    Value: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            ops: self.ops,
+            level: self.level,
+            node: unsafe { self.ops.clone(&self.node, self.level) },
+        }
+    }
+}
+
+impl<'a, N, const D: usize, Key, Value> Debug for NodeContainer<'a, N, D, Key, Value>
 where
     N: Debug,
     Key: Debug,
@@ -325,6 +584,46 @@ where
             .field(
                 "node",
                 &NodeChildrenRef::<N, D, Key, Value> {
+                    ops: self.ops,
+                    level: self.level,
+                    children: &self.node.children,
+
+                    _phantom: PhantomData,
+                },
+            )
+            .finish()
+    }
+}
+
+pub(crate) struct NodeRef<'a, 'b, N, const D: usize, Key, Value> {
+    ops: &'a NodeOps<N, D, Key, Value>,
+    level: usize,
+    node: &'b Node<N, D, Key, Value>,
+}
+
+impl<'a, 'b, N, const D: usize, Key, Value> NodeRef<'a, 'b, N, D, Key, Value> {
+    pub(crate) unsafe fn new(
+        ops: &'a NodeOps<N, D, Key, Value>,
+        level: usize,
+        node: &'b Node<N, D, Key, Value>,
+    ) -> Self {
+        NodeRef { ops, level, node }
+    }
+}
+
+impl<'a, 'b, N, const D: usize, Key, Value> Debug for NodeRef<'a, 'b, N, D, Key, Value>
+where
+    N: Debug,
+    Key: Debug,
+    Value: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Node")
+            .field("bounds", &self.node.bounds)
+            .field(
+                "node",
+                &NodeChildrenRef::<N, D, Key, Value> {
+                    ops: self.ops,
                     level: self.level,
                     children: &self.node.children,
 
@@ -336,6 +635,7 @@ where
 }
 
 pub(crate) struct NodeChildrenRef<'a, N, const D: usize, Key, Value> {
+    ops: &'a NodeOps<N, D, Key, Value>,
     level: usize,
     children: &'a FSVecData,
 
@@ -353,6 +653,7 @@ where
             f.debug_list()
                 .entries(unsafe {
                     fs_vec::Iter::<Node<N, D, Key, Value>>::new(self.children).map(|node| NodeRef {
+                        ops: self.ops,
                         level: self.level - 1,
                         node,
                     })

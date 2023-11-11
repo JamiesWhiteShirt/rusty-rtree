@@ -140,7 +140,7 @@ where
 /// bounds.
 pub(crate) unsafe fn quadratic_n<'a, 'b, N, const D: usize, Value>(
     min_children: usize,
-    ops: FSVecOps<Value>,
+    ops: &FSVecOps<Value>,
     overflow_value: Value,
     values: &mut FSVecData,
 ) -> (Bounds<N, D>, Bounds<N, D>, FSVecData)
