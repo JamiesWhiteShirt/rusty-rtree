@@ -27,19 +27,27 @@ where
 
 pub(crate) struct Node<N, const D: usize, Key, Value> {
     pub(crate) bounds: Bounds<N, D>,
-    pub(crate) children: FSVecData,
+    children: FSVecData,
 
     _phantom: PhantomData<(Key, Value)>,
 }
 
 impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
-    pub(crate) unsafe fn new(bounds: Bounds<N, D>, children: FSVecData, _level: usize) -> Self {
+    unsafe fn new(bounds: Bounds<N, D>, children: FSVecData, _level: usize) -> Self {
         Node {
             bounds,
             children,
 
             _phantom: PhantomData,
         }
+    }
+
+    pub(crate) unsafe fn children(&self) -> &FSVecData {
+        return &self.children;
+    }
+
+    pub(crate) unsafe fn children_mut(&mut self) -> &mut FSVecData {
+        return &mut self.children;
     }
 }
 
@@ -137,14 +145,14 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn new_leaf(&self) -> Node<N, D, Key, Value>
+    pub(crate) unsafe fn emtpy_leaf(&self) -> Node<N, D, Key, Value>
     where
         N: num_traits::Bounded,
     {
         Node::new(empty_bounds(), self.leaf.new(), 0)
     }
 
-    pub(crate) unsafe fn new_inner(&self, level: usize) -> Node<N, D, Key, Value>
+    pub(crate) unsafe fn empty_inner(&self, level: usize) -> Node<N, D, Key, Value>
     where
         N: num_traits::Bounded,
     {
