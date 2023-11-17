@@ -211,6 +211,12 @@ where
         return false;
     }
 
+    pub fn size(&self) -> usize {
+        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
+        let root_ref = unsafe { NodeRef::new(&ops, self.height, &self.root) };
+        root_ref.size()
+    }
+
     fn debug_assert_bvh(&self)
     where
         N: Debug,
@@ -370,6 +376,8 @@ mod tests {
             }
         }
 
+        assert!(tree.size() == 1000);
+
         {
             let mut rng = StdRng::from_seed([
                 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD,
@@ -384,7 +392,7 @@ mod tests {
             }
         }
 
-        // assert!(tree.root.children.len() == 0);
+        assert!(tree.size() == 0);
     }
 
     fn do_insert_bench(bencher: &mut Bencher, max_children: usize) {
