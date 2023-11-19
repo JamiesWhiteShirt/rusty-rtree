@@ -395,11 +395,11 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn size(&self, node: &Node<N, D, Key, Value>, level: usize) -> usize {
+    pub(crate) unsafe fn len(&self, node: &Node<N, D, Key, Value>, level: usize) -> usize {
         if level > 0 {
             let mut size = 0;
             for child in self.inner.as_slice(&node.children) {
-                size += self.size(child, level - 1);
+                size += self.len(child, level - 1);
             }
             size
         } else {
@@ -621,8 +621,8 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRef<'a, 'b, N, D, Key, Value> {
         NodeRef { ops, level, node }
     }
 
-    pub(crate) fn size(&self) -> usize {
-        unsafe { self.ops.size(self.node, self.level) }
+    pub(crate) fn len(&self) -> usize {
+        unsafe { self.ops.len(self.node, self.level) }
     }
 }
 
