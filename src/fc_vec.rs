@@ -6,36 +6,36 @@ use std::{
     ptr::{self, NonNull},
 };
 
-pub(crate) struct FSVecData {
+pub(crate) struct FCVecData {
     buf: NonNull<u8>,
     len: usize,
 }
 
-impl FSVecData {
+impl FCVecData {
     pub(crate) fn len(&self) -> usize {
         self.len
     }
 }
 
-pub(crate) struct FSVecOps<T> {
+pub(crate) struct FCVecOps<T> {
     cap: usize,
 
     _phantom: PhantomData<T>,
 }
 
-impl<T> Copy for FSVecOps<T> {}
-impl<T> Clone for FSVecOps<T> {
+impl<T> Copy for FCVecOps<T> {}
+impl<T> Clone for FCVecOps<T> {
     fn clone(&self) -> Self {
-        FSVecOps {
+        FCVecOps {
             cap: self.cap,
             _phantom: PhantomData,
         }
     }
 }
 
-impl<T> FSVecOps<T> {
+impl<T> FCVecOps<T> {
     pub(crate) fn new_ops(cap: usize) -> Self {
-        FSVecOps {
+        FCVecOps {
             cap,
             _phantom: PhantomData,
         }
@@ -45,29 +45,29 @@ impl<T> FSVecOps<T> {
         self.cap
     }
 
-    pub(crate) unsafe fn new(&self) -> FSVecData {
+    pub(crate) unsafe fn new(&self) -> FCVecData {
         let layout = alloc::Layout::array::<T>(self.cap).unwrap();
         let buf = match NonNull::new(alloc::alloc(layout)) {
             Some(ptr) => ptr,
             None => alloc::handle_alloc_error(layout),
         };
-        FSVecData { buf, len: 0 }
+        FCVecData { buf, len: 0 }
     }
 
-    pub(crate) unsafe fn drop(&self, data: &mut FSVecData) {
+    pub(crate) unsafe fn drop(&self, data: &mut FCVecData) {
         let layout = alloc::Layout::array::<T>(self.cap).unwrap();
         alloc::dealloc(data.buf.as_ptr(), layout);
     }
 
-    pub(crate) unsafe fn as_slice<'a>(&self, data: &'a FSVecData) -> &'a [T] {
+    pub(crate) unsafe fn as_slice<'a>(&self, data: &'a FCVecData) -> &'a [T] {
         std::slice::from_raw_parts(data.buf.as_ptr() as *const T, data.len)
     }
 
-    pub(crate) unsafe fn as_slice_mut<'a>(&self, data: &'a mut FSVecData) -> &'a mut [T] {
+    pub(crate) unsafe fn as_slice_mut<'a>(&self, data: &'a mut FCVecData) -> &'a mut [T] {
         std::slice::from_raw_parts_mut(data.buf.as_ptr() as *mut T, data.len)
     }
 
-    pub(crate) unsafe fn push(&self, data: &mut FSVecData, value: T) {
+    pub(crate) unsafe fn push(&self, data: &mut FCVecData, value: T) {
         if data.len == self.cap {
             panic!("Vector is full");
         }
@@ -77,7 +77,7 @@ impl<T> FSVecOps<T> {
         data.len += 1;
     }
 
-    pub(crate) unsafe fn insert(&self, data: &mut FSVecData, index: usize, value: T) {
+    pub(crate) unsafe fn insert(&self, data: &mut FCVecData, index: usize, value: T) {
         if index > data.len {
             panic!("Index out of bounds");
         }
@@ -91,7 +91,7 @@ impl<T> FSVecOps<T> {
         data.len += 1;
     }
 
-    pub(crate) unsafe fn remove(&self, data: &mut FSVecData, index: usize) -> T {
+    pub(crate) unsafe fn remove(&self, data: &mut FCVecData, index: usize) -> T {
         if index >= data.len {
             panic!("Index out of bounds");
         }
@@ -103,7 +103,7 @@ impl<T> FSVecOps<T> {
         removed
     }
 
-    pub(crate) unsafe fn swap_remove(&self, data: &mut FSVecData, index: usize) -> T {
+    pub(crate) unsafe fn swap_remove(&self, data: &mut FCVecData, index: usize) -> T {
         if index >= data.len {
             panic!("Index out of bounds");
         }
@@ -115,7 +115,7 @@ impl<T> FSVecOps<T> {
         child
     }
 
-    pub(crate) unsafe fn swap(&self, data: &mut FSVecData, index_1: usize, index_2: usize) {
+    pub(crate) unsafe fn swap(&self, data: &mut FCVecData, index_1: usize, index_2: usize) {
         if index_1 >= data.len || index_2 >= data.len {
             panic!("Index out of bounds");
         }
@@ -124,7 +124,7 @@ impl<T> FSVecOps<T> {
         ptr::swap(buf.add(index_1), buf.add(index_2));
     }
 
-    pub(crate) unsafe fn at<'a>(&self, data: &'a FSVecData, index: usize) -> &'a T {
+    pub(crate) unsafe fn at<'a>(&self, data: &'a FCVecData, index: usize) -> &'a T {
         if index >= data.len {
             panic!("Index out of bounds");
         }
@@ -132,7 +132,7 @@ impl<T> FSVecOps<T> {
         &*(data.buf.as_ptr() as *const T).add(index)
     }
 
-    pub(crate) unsafe fn at_mut<'a>(&self, data: &'a mut FSVecData, index: usize) -> &'a mut T {
+    pub(crate) unsafe fn at_mut<'a>(&self, data: &'a mut FCVecData, index: usize) -> &'a mut T {
         if index >= data.len {
             panic!("Index out of bounds");
         }
@@ -140,14 +140,14 @@ impl<T> FSVecOps<T> {
         &mut *(data.buf.as_ptr() as *mut T).add(index)
     }
 
-    pub(crate) unsafe fn wrap(self, vec: FSVecData) -> FSVec<T> {
-        FSVec {
+    pub(crate) unsafe fn wrap(self, vec: FCVecData) -> FCVec<T> {
+        FCVec {
             data: vec,
             ops: self,
         }
     }
 
-    pub(crate) unsafe fn clone(self, vec: &FSVecData) -> FSVecData
+    pub(crate) unsafe fn clone(self, vec: &FCVecData) -> FCVecData
     where
         T: Clone,
     {
@@ -160,14 +160,14 @@ impl<T> FSVecOps<T> {
 }
 
 pub(crate) struct Iter<'a, T: 'a> {
-    data: &'a FSVecData,
+    data: &'a FCVecData,
     index: usize,
 
     _phantom: PhantomData<T>,
 }
 
 impl<'a, T: 'a> Iter<'a, T> {
-    pub(crate) unsafe fn new(data: &'a FSVecData) -> Iter<'a, T> {
+    pub(crate) unsafe fn new(data: &'a FCVecData) -> Iter<'a, T> {
         Iter {
             data,
             index: 0,
@@ -197,12 +197,12 @@ impl<'a, T: 'a> Iterator for Iter<'a, T> {
     }
 }
 
-pub(crate) struct FSVec<T> {
-    data: FSVecData,
-    ops: FSVecOps<T>,
+pub(crate) struct FCVec<T> {
+    data: FCVecData,
+    ops: FCVecOps<T>,
 }
 
-impl<T> Drop for FSVec<T> {
+impl<T> Drop for FCVec<T> {
     fn drop(&mut self) {
         unsafe {
             self.ops.drop(&mut self.data);
@@ -210,7 +210,7 @@ impl<T> Drop for FSVec<T> {
     }
 }
 
-impl<T> Deref for FSVec<T> {
+impl<T> Deref for FCVec<T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
@@ -218,13 +218,13 @@ impl<T> Deref for FSVec<T> {
     }
 }
 
-impl<T> DerefMut for FSVec<T> {
+impl<T> DerefMut for FCVec<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { self.ops.as_slice_mut(&mut self.data) }
     }
 }
 
-impl<T> IntoIterator for FSVec<T> {
+impl<T> IntoIterator for FCVec<T> {
     type Item = T;
     type IntoIter = IntoIter<T>;
 

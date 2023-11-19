@@ -2,7 +2,7 @@ use std::{fmt::Debug, marker::PhantomData, ops::Sub, ptr};
 
 use crate::{
     bounds::{empty_bounds, min_bounds, min_bounds_all, Bounded, Bounds},
-    fs_vec::{self, FSVec, FSVecData, FSVecOps},
+    fc_vec::{self, FCVec, FCVecData, FCVecOps},
     intersects::Intersects,
     select, split,
 };
@@ -27,13 +27,13 @@ where
 
 pub(crate) struct Node<N, const D: usize, Key, Value> {
     pub(crate) bounds: Bounds<N, D>,
-    children: FSVecData,
+    children: FCVecData,
 
     _phantom: PhantomData<(Key, Value)>,
 }
 
 impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
-    unsafe fn new(bounds: Bounds<N, D>, children: FSVecData, _level: usize) -> Self {
+    unsafe fn new(bounds: Bounds<N, D>, children: FCVecData, _level: usize) -> Self {
         Node {
             bounds,
             children,
@@ -42,11 +42,11 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn children(&self) -> &FSVecData {
+    pub(crate) unsafe fn children(&self) -> &FCVecData {
         return &self.children;
     }
 
-    pub(crate) unsafe fn children_mut(&mut self) -> &mut FSVecData {
+    pub(crate) unsafe fn children_mut(&mut self) -> &mut FCVecData {
         return &mut self.children;
     }
 }
@@ -78,12 +78,12 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
     {
         let bounds = if level > 0 {
             min_bounds_all(
-                fs_vec::Iter::<Node<N, D, Key, Value>>::new(&self.children)
+                fc_vec::Iter::<Node<N, D, Key, Value>>::new(&self.children)
                     .map(|node| node.debug_assert_bvh(level - 1)),
             )
         } else {
             min_bounds_all(
-                fs_vec::Iter::<(Key, Value)>::new(&self.children).map(|(key, _)| key.bounds()),
+                fc_vec::Iter::<(Key, Value)>::new(&self.children).map(|(key, _)| key.bounds()),
             )
         };
         assert_eq!(self.bounds, bounds);
@@ -98,7 +98,7 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
     {
         assert_eq!(a.bounds, b.bounds);
         if level > 0 {
-            let ops = FSVecOps::<Node<N, D, Key, Value>>::new_ops(usize::MAX);
+            let ops = FCVecOps::<Node<N, D, Key, Value>>::new_ops(usize::MAX);
             let a_children = ops.as_slice(&b.children);
             let b_children = ops.as_slice(&b.children);
             assert_eq!(a_children.len(), b_children.len());
@@ -106,7 +106,7 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
                 Self::debug_assert_eq(a_child, b_child, level - 1);
             }
         } else {
-            let ops = FSVecOps::<(Key, Value)>::new_ops(usize::MAX);
+            let ops = FCVecOps::<(Key, Value)>::new_ops(usize::MAX);
             let self_children = ops.as_slice(&a.children);
             let other_children = ops.as_slice(&b.children);
             assert_eq!(self_children, other_children);
@@ -123,7 +123,7 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
             assert!(self.children.len() >= min_children);
         }
         if level > 0 {
-            let ops = FSVecOps::<Node<N, D, Key, Value>>::new_ops(usize::MAX);
+            let ops = FCVecOps::<Node<N, D, Key, Value>>::new_ops(usize::MAX);
             let children = ops.as_slice(&self.children);
             for child in children {
                 child.debug_assert_min_children(level - 1, min_children, false);
@@ -133,15 +133,15 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
 }
 
 pub(crate) struct NodeOps<N, const D: usize, Key, Value> {
-    leaf: FSVecOps<(Key, Value)>,
-    inner: FSVecOps<Node<N, D, Key, Value>>,
+    leaf: FCVecOps<(Key, Value)>,
+    inner: FCVecOps<Node<N, D, Key, Value>>,
 }
 
 impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     pub(crate) fn new_ops(cap: usize) -> Self {
         NodeOps {
-            leaf: FSVecOps::new_ops(cap),
-            inner: FSVecOps::new_ops(cap),
+            leaf: FCVecOps::new_ops(cap),
+            inner: FCVecOps::new_ops(cap),
         }
     }
 
@@ -162,14 +162,14 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     pub(crate) unsafe fn take_leaf_children(
         &self,
         node: Node<N, D, Key, Value>,
-    ) -> FSVec<(Key, Value)> {
+    ) -> FCVec<(Key, Value)> {
         self.leaf.wrap(node.children)
     }
 
     pub(crate) unsafe fn take_inner_children(
         &self,
         node: Node<N, D, Key, Value>,
-    ) -> FSVec<Node<N, D, Key, Value>> {
+    ) -> FCVec<Node<N, D, Key, Value>> {
         self.inner.wrap(node.children)
     }
 
@@ -652,7 +652,7 @@ where
 pub(crate) struct NodeChildrenRef<'a, 'b, N, const D: usize, Key, Value> {
     ops: &'a NodeOps<N, D, Key, Value>,
     level: usize,
-    children: &'b FSVecData,
+    children: &'b FCVecData,
 
     _phantom: PhantomData<&'b (N, Key, Value)>,
 }
@@ -667,7 +667,7 @@ where
         if self.level > 0 {
             f.debug_list()
                 .entries(unsafe {
-                    fs_vec::Iter::<Node<N, D, Key, Value>>::new(self.children).map(|node| NodeRef {
+                    fc_vec::Iter::<Node<N, D, Key, Value>>::new(self.children).map(|node| NodeRef {
                         ops: self.ops,
                         level: self.level - 1,
                         node,
@@ -677,7 +677,7 @@ where
         } else {
             f.debug_list()
                 .entries(unsafe {
-                    fs_vec::Iter::<(Key, Value)>::new(self.children)
+                    fc_vec::Iter::<(Key, Value)>::new(self.children)
                         .map(|(key, value)| (key, value))
                 })
                 .finish()

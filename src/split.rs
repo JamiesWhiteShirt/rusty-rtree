@@ -5,7 +5,7 @@ use num_traits::Float;
 
 use crate::{
     bounds::{min_bounds, Bounded, Bounds},
-    fs_vec::{FSVecData, FSVecOps},
+    fc_vec::{FCVecData, FCVecOps},
 };
 
 /// Returns a pair of indices (a, b) where a < b. b is therefore also never zero.
@@ -140,10 +140,10 @@ where
 /// bounds.
 pub(crate) unsafe fn quadratic_n<'a, 'b, N, const D: usize, Value>(
     min_children: usize,
-    ops: &FSVecOps<Value>,
+    ops: &FCVecOps<Value>,
     overflow_value: Value,
-    values: &mut FSVecData,
-) -> (Bounds<N, D>, Bounds<N, D>, FSVecData)
+    values: &mut FCVecData,
+) -> (Bounds<N, D>, Bounds<N, D>, FCVecData)
 where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
     Value: Bounded<N, D>,
