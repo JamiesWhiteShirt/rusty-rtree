@@ -2,7 +2,7 @@ use std::{fmt::Debug, marker::PhantomData, ops::Sub, ptr};
 
 use crate::{
     bounds::{empty_bounds, min_bounds, min_bounds_all, Bounded, Bounds},
-    fc_vec::{self, FCVec, FCVecData, FCVecOps},
+    fc_vec::{self, FCVec, FCVecContainer, FCVecOps},
     intersects::Intersects,
     select, split,
 };
@@ -27,13 +27,13 @@ where
 
 pub(crate) struct Node<N, const D: usize, Key, Value> {
     pub(crate) bounds: Bounds<N, D>,
-    children: FCVecData,
+    children: FCVec,
 
     _phantom: PhantomData<(Key, Value)>,
 }
 
 impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
-    unsafe fn new(bounds: Bounds<N, D>, children: FCVecData, _level: usize) -> Self {
+    unsafe fn new(bounds: Bounds<N, D>, children: FCVec, _level: usize) -> Self {
         Node {
             bounds,
             children,
@@ -42,11 +42,11 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn children(&self) -> &FCVecData {
+    pub(crate) unsafe fn children(&self) -> &FCVec {
         return &self.children;
     }
 
-    pub(crate) unsafe fn children_mut(&mut self) -> &mut FCVecData {
+    pub(crate) unsafe fn children_mut(&mut self) -> &mut FCVec {
         return &mut self.children;
     }
 }
@@ -162,14 +162,14 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     pub(crate) unsafe fn take_leaf_children(
         &self,
         node: Node<N, D, Key, Value>,
-    ) -> FCVec<(Key, Value)> {
+    ) -> FCVecContainer<(Key, Value)> {
         self.leaf.wrap(node.children)
     }
 
     pub(crate) unsafe fn take_inner_children(
         &self,
         node: Node<N, D, Key, Value>,
-    ) -> FCVec<Node<N, D, Key, Value>> {
+    ) -> FCVecContainer<Node<N, D, Key, Value>> {
         self.inner.wrap(node.children)
     }
 
@@ -652,7 +652,7 @@ where
 pub(crate) struct NodeChildrenRef<'a, 'b, N, const D: usize, Key, Value> {
     ops: &'a NodeOps<N, D, Key, Value>,
     level: usize,
-    children: &'b FCVecData,
+    children: &'b FCVec,
 
     _phantom: PhantomData<&'b (N, Key, Value)>,
 }
