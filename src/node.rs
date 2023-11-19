@@ -649,15 +649,15 @@ where
     }
 }
 
-pub(crate) struct NodeChildrenRef<'a, N, const D: usize, Key, Value> {
+pub(crate) struct NodeChildrenRef<'a, 'b, N, const D: usize, Key, Value> {
     ops: &'a NodeOps<N, D, Key, Value>,
     level: usize,
-    children: &'a FSVecData,
+    children: &'b FSVecData,
 
-    _phantom: PhantomData<&'a (N, Key, Value)>,
+    _phantom: PhantomData<&'b (N, Key, Value)>,
 }
 
-impl<'a, N, const D: usize, Key, Value> Debug for NodeChildrenRef<'a, N, D, Key, Value>
+impl<'a, 'b, N, const D: usize, Key, Value> Debug for NodeChildrenRef<'a, 'b, N, D, Key, Value>
 where
     N: Debug,
     Key: Debug,
