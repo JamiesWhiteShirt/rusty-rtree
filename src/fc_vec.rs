@@ -259,7 +259,7 @@ impl<T> FCVecOps<T> {
     }
 
     /// Returns a [safe container](FCVecContainer<T>) for the given FCVec.
-    pub(crate) unsafe fn wrap(self, vec: FCVec) -> FCVecContainer<T> {
+    pub(crate) unsafe fn wrap<'a>(&'a self, vec: FCVec) -> FCVecContainer<'a, T> {
         FCVecContainer {
             data: vec,
             ops: self,
@@ -327,12 +327,12 @@ impl<'a, T: 'a> Iterator for Iter<'a, T> {
     }
 }
 
-pub(crate) struct FCVecContainer<T> {
+pub(crate) struct FCVecContainer<'a, T> {
     data: FCVec,
-    ops: FCVecOps<T>,
+    ops: &'a FCVecOps<T>,
 }
 
-impl<T> Drop for FCVecContainer<T> {
+impl<'a, T> Drop for FCVecContainer<'a, T> {
     fn drop(&mut self) {
         unsafe {
             self.ops.drop(&mut self.data);
@@ -340,7 +340,7 @@ impl<T> Drop for FCVecContainer<T> {
     }
 }
 
-impl<T> Deref for FCVecContainer<T> {
+impl<'a, T> Deref for FCVecContainer<'a, T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
@@ -348,13 +348,13 @@ impl<T> Deref for FCVecContainer<T> {
     }
 }
 
-impl<T> DerefMut for FCVecContainer<T> {
+impl<'a, T> DerefMut for FCVecContainer<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { self.ops.as_slice_mut(&mut self.data) }
     }
 }
 
-impl<T> IntoIterator for FCVecContainer<T> {
+impl<'a, T> IntoIterator for FCVecContainer<'a, T> {
     type Item = T;
     type IntoIter = IntoIter<T>;
 
