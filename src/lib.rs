@@ -19,10 +19,6 @@ use iter::FilterIter;
 use node::{Node, NodeContainer, NodeEntry, NodeOps, NodeRef};
 use std::{fmt::Debug, ops::Sub};
 
-fn main() {
-    println!("Hello, world!");
-}
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Config {
     pub max_children: usize,
