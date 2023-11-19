@@ -406,6 +406,62 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             node.children.len()
         }
     }
+
+    pub(crate) unsafe fn get<'a>(
+        &self,
+        node: &'a Node<N, D, Key, Value>,
+        level: usize,
+        key: &Key,
+    ) -> Option<&'a Value>
+    where
+        N: Ord,
+        Key: Eq + Bounded<N, D>,
+    {
+        if level > 0 {
+            for child in self.inner.as_slice(&node.children) {
+                if child.bounds.contains(&key.bounds()) {
+                    if let Some(value) = self.get(child, level - 1, key) {
+                        return Some(value);
+                    }
+                }
+            }
+            None
+        } else {
+            self.leaf
+                .as_slice(&node.children)
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v)
+        }
+    }
+
+    pub(crate) unsafe fn get_mut<'a>(
+        &self,
+        node: &'a mut Node<N, D, Key, Value>,
+        level: usize,
+        key: &Key,
+    ) -> Option<&'a mut Value>
+    where
+        N: Ord,
+        Key: Eq + Bounded<N, D>,
+    {
+        if level > 0 {
+            for child in self.inner.as_slice_mut(&mut node.children) {
+                if child.bounds.contains(&key.bounds()) {
+                    if let Some(value) = self.get_mut(child, level - 1, key) {
+                        return Some(value);
+                    }
+                }
+            }
+            None
+        } else {
+            self.leaf
+                .as_slice_mut(&mut node.children)
+                .iter_mut()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v)
+        }
+    }
 }
 
 pub(crate) struct NodeRefMut<'a, 'b, N, const D: usize, Key, Value> {
@@ -438,7 +494,7 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
         }
     }
 
-    fn insert(
+    unsafe fn insert(
         &mut self,
         min_children: usize,
         entry: NodeEntry<'a, N, D, Key, Value>,
@@ -476,6 +532,14 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
                 underfull_nodes,
             )
         }
+    }
+
+    pub(crate) fn get_mut(self, key: &Key) -> Option<&'b mut Value>
+    where
+        N: Ord,
+        Key: Eq + Bounded<N, D>,
+    {
+        unsafe { self.ops.get_mut(self.node, self.level, key) }
     }
 }
 
@@ -623,6 +687,14 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRef<'a, 'b, N, D, Key, Value> {
 
     pub(crate) fn len(&self) -> usize {
         unsafe { self.ops.len(self.node, self.level) }
+    }
+
+    pub(crate) fn get(&self, key: &Key) -> Option<&'b Value>
+    where
+        N: Ord,
+        Key: Eq + Bounded<N, D>,
+    {
+        unsafe { self.ops.get(self.node, self.level, key) }
     }
 }
 

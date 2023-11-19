@@ -16,7 +16,7 @@ mod vector;
 use bounds::Bounded;
 use filter::SpatialFilter;
 use iter::FilterIter;
-use node::{Node, NodeContainer, NodeEntry, NodeOps, NodeRef};
+use node::{Node, NodeContainer, NodeEntry, NodeOps, NodeRef, NodeRefMut};
 use std::{fmt::Debug, ops::Sub};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -152,6 +152,24 @@ where
         unsafe {
             self.insert_entry(0, NodeEntry::Leaf((key, value)));
         }
+    }
+
+    pub fn get(&self, key: &Key) -> Option<&Value>
+    where
+        Key: Eq,
+    {
+        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
+        let root_ref = unsafe { NodeRef::new(&ops, self.height, &self.root) };
+        root_ref.get(key)
+    }
+
+    pub fn get_mut(&mut self, key: &Key) -> Option<&mut Value>
+    where
+        Key: Eq,
+    {
+        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
+        let root_ref = unsafe { NodeRefMut::new(&ops, self.height, &mut self.root) };
+        root_ref.get_mut(key)
     }
 
     pub fn remove(&mut self, key: &Key, value: &Value) -> bool
@@ -327,6 +345,40 @@ mod tests {
             },
             (),
         );
+    }
+
+    #[test]
+    fn get() {
+        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, bool>::new(RTreeConfig {
+            max_children: 4,
+            min_children: 2,
+        });
+
+        let key = Bounds {
+            min: Vector([0, 0]),
+            max: Vector([1, 1]),
+        };
+        tree.insert(key, true);
+
+        assert!(tree.get(&key).unwrap());
+    }
+
+    #[test]
+    fn get_mut() {
+        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, bool>::new(RTreeConfig {
+            max_children: 4,
+            min_children: 2,
+        });
+
+        let key = Bounds {
+            min: Vector([0, 0]),
+            max: Vector([1, 1]),
+        };
+        tree.insert(key, false);
+
+        *tree.get_mut(&key).unwrap() = true;
+
+        assert!(tree.get(&key).unwrap());
     }
 
     #[test]
