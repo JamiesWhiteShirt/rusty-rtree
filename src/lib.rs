@@ -20,13 +20,32 @@ use node::{Node, NodeContainer, NodeEntry, NodeOps, NodeRef};
 use std::{fmt::Debug, ops::Sub};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct Config {
+pub struct RTreeConfig {
     pub max_children: usize,
     pub min_children: usize,
 }
 
+/// R-tree spatial index with a map-like interface. It optimizes for
+/// fast queries for objects that intersect a given space.
+///
+/// The R-tree operates on objects that are bounded in `D` dimensions measured
+/// in scalars of type `N`. Each entry in the R-tree is a key-value pair, where
+/// the `Key` is a bounded object, while the `Value` may be used to store
+/// additional data associated with the object.
+///
+/// Unlike a traditional map, a single key may be associated with multiple
+/// values.
+///
+/// The R-tree is parameterized by a `RTreeConfig` that specifies the maximum
+/// and minimum number of children per node. This configuration will affect
+/// the performance of the R-tree in different operations. The optimal
+/// configuration will depend on the use case.
+///
+/// # Safety
+///
+/// Here be dragons. The R-tree is implemented using unsafe code.
 pub struct RTree<N, const D: usize, Key, Value> {
-    config: Config,
+    config: RTreeConfig,
     height: usize,
     root: Node<N, D, Key, Value>,
 }
@@ -57,26 +76,13 @@ impl<N, const D: usize, Key, Value> Drop for RTree<N, D, Key, Value> {
     }
 }
 
-impl<'a, N, const D: usize, Key, Value> IntoIterator for &'a RTree<N, D, Key, Value>
-where
-    Key: Bounded<N, D>,
-{
-    type Item = &'a (Key, Value);
-
-    type IntoIter = iter::Iter<'a, N, D, Key, Value>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        unsafe { Self::IntoIter::new(self.height, &self.root) }
-    }
-}
-
 impl<N, const D: usize, Key, Value> RTree<N, D, Key, Value>
 where
     N: Ord + num_traits::Bounded,
     Key: Bounded<N, D>,
 {
     pub fn iter<'a>(&'a self) -> iter::Iter<'a, N, D, Key, Value> {
-        self.into_iter()
+        unsafe { iter::Iter::new(self.height, &self.root) }
     }
 
     pub fn filter_iter<'a, Filter: SpatialFilter<N, D, Key>>(
@@ -86,7 +92,7 @@ where
         unsafe { FilterIter::new(self.height, &self.root, filter) }
     }
 
-    pub fn new(config: Config) -> RTree<N, D, Key, Value> {
+    pub fn new(config: RTreeConfig) -> RTree<N, D, Key, Value> {
         let ops = NodeOps::<N, D, Key, Value>::new_ops(config.max_children);
         return RTree {
             height: 0,
@@ -262,14 +268,14 @@ mod tests {
     use crate::line::Line;
     use crate::sphere::Sphere;
     use crate::vector::Vector;
-    use crate::Config;
+    use crate::RTreeConfig;
 
     use super::bounds::Bounds;
     use super::RTree;
 
     #[test]
     fn insert() {
-        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, ()>::new(Config {
+        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, ()>::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
@@ -326,7 +332,7 @@ mod tests {
     #[test]
     fn clone() {
         let mut tree: RTree<i32, 2, Bounds<i32, 2>, i32> =
-            RTree::<i32, 2, Bounds<i32, 2>, i32>::new(Config {
+            RTree::<i32, 2, Bounds<i32, 2>, i32>::new(RTreeConfig {
                 max_children: 4,
                 min_children: 2,
             });
@@ -352,7 +358,7 @@ mod tests {
     #[test]
     fn remove() {
         let mut tree: RTree<i32, 2, Bounds<i32, 2>, i32> =
-            RTree::<i32, 2, Bounds<i32, 2>, i32>::new(Config {
+            RTree::<i32, 2, Bounds<i32, 2>, i32>::new(RTreeConfig {
                 max_children: 4,
                 min_children: 2,
             });
@@ -399,7 +405,7 @@ mod tests {
             0xDE, 0xAD, 0xBE, 0xEF,
         ]);
 
-        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, i32>::new(Config {
+        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, i32>::new(RTreeConfig {
             max_children,
             min_children,
         });
@@ -457,7 +463,7 @@ mod tests {
             0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
             0xDE, 0xAD, 0xBE, 0xEF,
         ]);
-        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, i32>::new(Config {
+        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, i32>::new(RTreeConfig {
             max_children,
             min_children: max_children / 2,
         });
@@ -511,7 +517,7 @@ mod tests {
 
     #[test]
     fn cosmic() -> Result<(), Box<dyn Error>> {
-        let mut stars = RTree::<N32, 3, Vector<N32, 3>, StarInfo>::new(Config {
+        let mut stars = RTree::<N32, 3, Vector<N32, 3>, StarInfo>::new(RTreeConfig {
             min_children: 4,
             max_children: 32,
         });
@@ -540,7 +546,7 @@ mod tests {
             max: sol_pos.into_map(|coord| coord + 100.0),
         };
 
-        let mut star_lines = RTree::<N32, 3, Line<N32, 3>, ()>::new(Config {
+        let mut star_lines = RTree::<N32, 3, Line<N32, 3>, ()>::new(RTreeConfig {
             min_children: 4,
             max_children: 32,
         });
