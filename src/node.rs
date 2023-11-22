@@ -300,9 +300,8 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         min_children: usize,
         level: usize,
         key: &Key,
-        value: &Value,
         underfull_nodes: &mut [Option<Node<N, D, Key, Value>>],
-    ) -> bool
+    ) -> Option<Value>
     where
         N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
         Key: Bounded<N, D> + Eq,
@@ -317,39 +316,39 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                     .at(&node.children, i)
                     .bounds
                     .intersects(&key.bounds())
-                    && self.remove(
+                {
+                    if let Some(value) = self.remove(
                         self.inner.at_mut(&mut node.children, i),
                         min_children,
                         level - 1,
                         key,
-                        value,
                         underfull_nodes,
-                    )
-                {
-                    if self.inner.at(&node.children, i).children.len() < min_children {
-                        let removed_child = self.inner.swap_remove(&mut node.children, i);
-                        underfull_nodes[level - 1] = Some(removed_child);
+                    ) {
+                        if self.inner.at(&node.children, i).children.len() < min_children {
+                            let removed_child = self.inner.swap_remove(&mut node.children, i);
+                            underfull_nodes[level - 1] = Some(removed_child);
+                        }
+
+                        node.bounds = min_bounds_all(
+                            self.inner
+                                .as_slice(&node.children)
+                                .iter()
+                                .map(|child| child.bounds()),
+                        );
+
+                        return Some(value);
                     }
-
-                    node.bounds = min_bounds_all(
-                        self.inner
-                            .as_slice(&node.children)
-                            .iter()
-                            .map(|child| child.bounds()),
-                    );
-
-                    return true;
                 }
             }
-            return false;
+            return None;
         } else {
             let index = self
                 .leaf
                 .as_slice(&node.children)
                 .iter()
-                .position(|(k, v)| k == key && v == value);
+                .position(|(k, v)| k == key);
             if let Some(i) = index {
-                self.leaf.swap_remove(&mut node.children, i);
+                let value = self.leaf.swap_remove(&mut node.children, i).1;
                 node.bounds = min_bounds_all(
                     self.leaf
                         .as_slice(&node.children)
@@ -357,9 +356,9 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                         .map(|(key, _)| key.bounds()),
                 );
 
-                return true;
+                return Some(value);
             }
-            return false;
+            return None;
         }
     }
 
@@ -620,9 +619,8 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
         &mut self,
         min_children: usize,
         key: &Key,
-        value: &Value,
         underfull_nodes: &mut [Option<Node<N, D, Key, Value>>],
-    ) -> bool
+    ) -> Option<Value>
     where
         N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
         Key: Bounded<N, D> + Eq,
@@ -634,7 +632,6 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
                 min_children,
                 self.level,
                 key,
-                value,
                 underfull_nodes,
             )
         }
@@ -716,9 +713,8 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<'a, N, D, Key, Value> {
         &mut self,
         min_children: usize,
         key: &Key,
-        value: &Value,
         underfully_nodes: &mut [Option<Node<N, D, Key, Value>>],
-    ) -> bool
+    ) -> Option<Value>
     where
         N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
         Key: Bounded<N, D> + Eq,
@@ -730,7 +726,6 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<'a, N, D, Key, Value> {
                 min_children,
                 self.level,
                 key,
-                value,
                 underfully_nodes,
             )
         }

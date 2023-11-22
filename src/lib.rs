@@ -194,7 +194,7 @@ where
         root_ref.get_mut(key)
     }
 
-    pub fn remove(&mut self, key: &Key, value: &Value) -> bool
+    pub fn remove(&mut self, key: &Key) -> Option<Value>
     where
         Key: Eq,
         Value: Eq,
@@ -203,13 +203,12 @@ where
         let height = self.height;
         let mut underfull_nodes: Box<[Option<Node<N, D, Key, Value>>]> =
             std::iter::repeat_with(|| None).take(height).collect();
-        if unsafe {
+        if let Some(value) = unsafe {
             ops.remove(
                 &mut self.root,
                 self.config.min_children,
                 height,
                 key,
-                value,
                 &mut underfull_nodes,
             )
         } {
@@ -248,9 +247,9 @@ where
                 }
             }
 
-            return true;
+            return Some(value);
         }
-        return false;
+        return None;
     }
 
     pub fn len(&self) -> usize {
@@ -503,7 +502,7 @@ mod tests {
             for i in 0..1000 {
                 let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
                 let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
-                assert!(tree.remove(&Bounds { min, max }, &i));
+                assert_eq!(tree.remove(&Bounds { min, max }), Some(i));
                 tree.debug_assert_bvh();
             }
         }
