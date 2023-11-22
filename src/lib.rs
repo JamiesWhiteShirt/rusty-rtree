@@ -124,14 +124,6 @@ where
     N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
     Key: Bounded<N, D>,
 {
-    fn set_root(&mut self, new_root: Node<N, D, Key, Value>) {
-        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
-        unsafe {
-            ops.drop(&mut self.root, self.height);
-        }
-        self.root = new_root;
-    }
-
     /// Inserts an entry into a node at the given level.
     unsafe fn insert_entry(&mut self, level: usize, entry: NodeEntry<N, D, Key, Value>) {
         let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
@@ -212,12 +204,8 @@ where
                 &mut underfull_nodes,
             )
         } {
-            // If root is an inner node with only one child, that child becomes the new root
-            if height > 0 {
-                if let Some(new_root) = unsafe { ops.take_single_inner_child(&mut self.root) } {
-                    self.set_root(new_root);
-                    self.height -= 1;
-                }
+            if unsafe { ops.try_unbranch(&mut self.root, self.height) } {
+                self.height -= 1;
             }
 
             // reinsert entries at leaf level

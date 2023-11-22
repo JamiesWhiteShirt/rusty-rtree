@@ -193,18 +193,30 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         ptr::write(root, Node::new(bounds, next_root_children, level));
     }
 
-    pub(crate) unsafe fn take_single_inner_child(
+    /// Tries to unbranch the root node in-place, such that the root node becomes
+    /// the only child of the previous root node.
+    ///
+    /// Returns `true` if the root node was unbranched and the height must be
+    /// decremented.
+    ///
+    /// Returns `false` if the root node could not be unbranched.
+    pub(crate) unsafe fn try_unbranch(
         &self,
-        node: &mut Node<N, D, Key, Value>,
-    ) -> Option<Node<N, D, Key, Value>>
+        root: &mut Node<N, D, Key, Value>,
+        level: usize,
+    ) -> bool
     where
         N: num_traits::Bounded,
     {
-        if node.children.len() == 1 {
-            node.bounds = empty_bounds();
-            Some(self.inner.remove(&mut node.children, 0))
+        if level > 0 && root.children.len() == 1 {
+            let new_root = self.inner.remove(&mut root.children, 0);
+            unsafe {
+                self.drop(root, level);
+            }
+            *root = new_root;
+            return true;
         } else {
-            None
+            return false;
         }
     }
 
@@ -588,17 +600,6 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
         }
     }
 
-    unsafe fn take_single_inner_child(&mut self) -> Option<NodeContainer<N, D, Key, Value>>
-    where
-        N: num_traits::Bounded,
-    {
-        unsafe {
-            self.ops
-                .take_single_inner_child(&mut self.node)
-                .map(|child| NodeContainer::new(self.ops, self.level - 1, child))
-        }
-    }
-
     unsafe fn insert(
         &mut self,
         min_children: usize,
@@ -680,17 +681,6 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<'a, N, D, Key, Value> {
         node: Node<N, D, Key, Value>,
     ) -> Self {
         NodeContainer { ops, level, node }
-    }
-
-    unsafe fn take_single_inner_child(&mut self) -> Option<NodeContainer<N, D, Key, Value>>
-    where
-        N: num_traits::Bounded,
-    {
-        unsafe {
-            self.ops
-                .take_single_inner_child(&mut self.node)
-                .map(|child| NodeContainer::new(self.ops, self.level - 1, child))
-        }
     }
 
     fn insert(
