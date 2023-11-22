@@ -5,6 +5,7 @@ use crate::{
     fc_vec::{self, FCVec, FCVecContainer, FCVecOps},
     intersects::Intersects,
     select, split,
+    util::{get_only, GetOnlyResult},
 };
 
 pub(crate) enum NodeEntry<'a, N, const D: usize, Key, Value> {
@@ -462,6 +463,111 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                 .map(|(_, v)| v)
         }
     }
+
+    pub(crate) unsafe fn insert_unique<'a>(
+        &self,
+        node: &'a mut Node<N, D, Key, Value>,
+        level: usize,
+        min_children: usize,
+        key: Key,
+        value: Value,
+    ) -> (Option<Value>, Option<Node<N, D, Key, Value>>)
+    where
+        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+        Key: Eq + Bounded<N, D>,
+    {
+        let entry_bounds = key.bounds();
+        if level > 0 {
+            // Check which children contain the key bounds
+            let children_containing_key = self
+                .inner
+                .as_slice_mut(&mut node.children)
+                .iter_mut()
+                .filter(|child| child.bounds.contains(&entry_bounds));
+            match get_only(children_containing_key) {
+                GetOnlyResult::None => {
+                    // If there are no children containing the key bounds, then
+                    // the key cannot exist in the node.
+                    (
+                        None,
+                        self.insert(
+                            node,
+                            level,
+                            min_children,
+                            level,
+                            NodeEntry::Leaf((key, value)),
+                        ),
+                    )
+                }
+                GetOnlyResult::Only(child) => {
+                    let mut child = NodeRefMut::new(self, level - 1, child);
+                    // If there is only one children containing the key bounds,
+                    // then we can maintain the uniqueness invariant by
+                    // performing a unique insert into that child.
+                    let (old_value, new_child) = child.insert_unique(min_children, key, value);
+
+                    (
+                        old_value,
+                        if let Some(new_child) = new_child {
+                            // The child node split, so the entries in new_child are no longer part of self
+                            // Recompute the bounds of self before trying to insert new_child into self
+                            node.bounds = min_bounds_all(
+                                self.inner
+                                    .as_slice(&node.children)
+                                    .iter()
+                                    .map(|child| child.bounds()),
+                            );
+                            self.self_insert(node, level, min_children, NodeEntry::Inner(new_child))
+                        } else {
+                            node.bounds = min_bounds(&node.bounds, &entry_bounds);
+                            None
+                        },
+                    )
+                }
+                GetOnlyResult::Multiple => {
+                    // Try to find the key among the children and overwrite it if it
+                    // exists. If it doesn't exist, perform a regular insert.
+
+                    if let Some(value_ref) = self.get_mut(node, level, &key) {
+                        (Some(std::mem::replace(value_ref, value)), None)
+                    } else {
+                        (
+                            None,
+                            self.insert(
+                                node,
+                                level,
+                                min_children,
+                                level,
+                                NodeEntry::Leaf((key, value)),
+                            ),
+                        )
+                    }
+                }
+            }
+        } else {
+            // Try to find the key among the children and overwrite it if it
+            // exists. If it doesn't exist, perform a regular insert.
+            if let Some(entry) = self
+                .leaf
+                .as_slice_mut(&mut node.children)
+                .iter_mut()
+                .find(|(k, _)| k == &key)
+            {
+                (Some(std::mem::replace(&mut entry.1, value)), None)
+            } else {
+                (
+                    None,
+                    self.insert(
+                        node,
+                        level,
+                        min_children,
+                        level,
+                        NodeEntry::Leaf((key, value)),
+                    ),
+                )
+            }
+        }
+    }
 }
 
 pub(crate) struct NodeRefMut<'a, 'b, N, const D: usize, Key, Value> {
@@ -540,6 +646,27 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
         Key: Eq + Bounded<N, D>,
     {
         unsafe { self.ops.get_mut(self.node, self.level, key) }
+    }
+
+    pub(crate) fn insert_unique(
+        &mut self,
+        min_children: usize,
+        key: Key,
+        value: Value,
+    ) -> (Option<Value>, Option<NodeContainer<'a, N, D, Key, Value>>)
+    where
+        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+        Key: Eq + Bounded<N, D>,
+    {
+        unsafe {
+            let (prev_value, new_sibling) =
+                self.ops
+                    .insert_unique(&mut self.node, self.level, min_children, key, value);
+            (
+                prev_value,
+                new_sibling.map(|node| NodeContainer::new(self.ops, self.level, node)),
+            )
+        }
     }
 }
 
