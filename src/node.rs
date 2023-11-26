@@ -1,8 +1,8 @@
-use std::{fmt::Debug, marker::PhantomData, ops::Sub, ptr};
+use std::{fmt::Debug, marker::PhantomData, mem::ManuallyDrop, ops::Sub, ptr};
 
 use crate::{
     bounds::{empty_bounds, min_bounds, min_bounds_all, Bounded, Bounds},
-    fc_vec::{self, FCVec, FCVecContainer, FCVecOps},
+    fc_vec::{FCVec, FCVecContainer, FCVecOps},
     intersects::Intersects,
     select, split,
     util::{get_only, GetOnlyResult},
@@ -26,15 +26,34 @@ where
     }
 }
 
+union NodeChildren<N, const D: usize, Key, Value> {
+    inner: ManuallyDrop<FCVec<Node<N, D, Key, Value>>>,
+    leaf: ManuallyDrop<FCVec<(Key, Value)>>,
+}
+
+impl<N, const D: usize, Key, Value> NodeChildren<N, D, Key, Value> {
+    pub(crate) fn len(&self, level: usize) -> usize {
+        if level > 0 {
+            unsafe { (*self.inner).len() }
+        } else {
+            unsafe { (*self.leaf).len() }
+        }
+    }
+}
+
 pub(crate) struct Node<N, const D: usize, Key, Value> {
     pub(crate) bounds: Bounds<N, D>,
-    children: FCVec,
+    children: NodeChildren<N, D, Key, Value>,
 
     _phantom: PhantomData<(Key, Value)>,
 }
 
 impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
-    unsafe fn new(bounds: Bounds<N, D>, children: FCVec, _level: usize) -> Self {
+    unsafe fn new(
+        bounds: Bounds<N, D>,
+        children: NodeChildren<N, D, Key, Value>,
+        _level: usize,
+    ) -> Self {
         Node {
             bounds,
             children,
@@ -43,12 +62,12 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn children(&self) -> &FCVec {
-        return &self.children;
+    pub(crate) unsafe fn inner_children(&self) -> &FCVec<Node<N, D, Key, Value>> {
+        &self.children.inner
     }
 
-    pub(crate) unsafe fn children_mut(&mut self) -> &mut FCVec {
-        return &mut self.children;
+    pub(crate) unsafe fn leaf_children(&self) -> &FCVec<(Key, Value)> {
+        &self.children.leaf
     }
 }
 
@@ -79,13 +98,13 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
     {
         let bounds = if level > 0 {
             min_bounds_all(
-                fc_vec::Iter::<Node<N, D, Key, Value>>::new(&self.children)
+                self.children
+                    .inner
+                    .iter()
                     .map(|node| node.debug_assert_bvh(level - 1)),
             )
         } else {
-            min_bounds_all(
-                fc_vec::Iter::<(Key, Value)>::new(&self.children).map(|(key, _)| key.bounds()),
-            )
+            min_bounds_all(self.children.leaf.iter().map(|(key, _)| key.bounds()))
         };
         assert_eq!(self.bounds, bounds);
         bounds
@@ -99,18 +118,14 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
     {
         assert_eq!(a.bounds, b.bounds);
         if level > 0 {
-            let ops = FCVecOps::<Node<N, D, Key, Value>>::new_ops(usize::MAX);
-            let a_children = ops.as_slice(&b.children);
-            let b_children = ops.as_slice(&b.children);
+            let a_children = &*b.children.inner;
+            let b_children = &*b.children.inner;
             assert_eq!(a_children.len(), b_children.len());
             for (a_child, b_child) in a_children.iter().zip(b_children.iter()) {
                 Self::debug_assert_eq(a_child, b_child, level - 1);
             }
         } else {
-            let ops = FCVecOps::<(Key, Value)>::new_ops(usize::MAX);
-            let self_children = ops.as_slice(&a.children);
-            let other_children = ops.as_slice(&b.children);
-            assert_eq!(self_children, other_children);
+            assert_eq!(*a.children.leaf, *b.children.leaf);
         }
     }
 
@@ -121,12 +136,16 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
         is_root: bool,
     ) {
         if !is_root {
-            assert!(self.children.len() >= min_children);
+            assert!(
+                if level > 0 {
+                    self.children.inner.len()
+                } else {
+                    self.children.leaf.len()
+                } >= min_children
+            );
         }
         if level > 0 {
-            let ops = FCVecOps::<Node<N, D, Key, Value>>::new_ops(usize::MAX);
-            let children = ops.as_slice(&self.children);
-            for child in children {
+            for child in self.children.inner.iter() {
                 child.debug_assert_min_children(level - 1, min_children, false);
             }
         }
@@ -150,34 +169,45 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     where
         N: num_traits::Bounded,
     {
-        Node::new(empty_bounds(), self.leaf.new(), 0)
+        Node::new(
+            empty_bounds(),
+            NodeChildren {
+                leaf: ManuallyDrop::new(self.leaf.new()),
+            },
+            0,
+        )
     }
 
     pub(crate) unsafe fn empty_inner(&self, level: usize) -> Node<N, D, Key, Value>
     where
         N: num_traits::Bounded,
     {
-        Node::new(empty_bounds(), self.inner.new(), level)
+        Node::new(
+            empty_bounds(),
+            NodeChildren {
+                inner: ManuallyDrop::new(self.inner.new()),
+            },
+            level,
+        )
     }
 
     pub(crate) unsafe fn take_leaf_children(
         &self,
         node: Node<N, D, Key, Value>,
     ) -> FCVecContainer<(Key, Value)> {
-        self.leaf.wrap(node.children)
+        self.leaf.wrap(ManuallyDrop::into_inner(node.children.leaf))
     }
 
     pub(crate) unsafe fn take_inner_children(
         &self,
         node: Node<N, D, Key, Value>,
     ) -> FCVecContainer<Node<N, D, Key, Value>> {
-        self.inner.wrap(node.children)
+        self.inner
+            .wrap(ManuallyDrop::into_inner(node.children.inner))
     }
 
-    /*
-    Branches the root node into two nodes in-place, such that the previous root
-    node and the sibling node become children of the new root node.
-     */
+    /// Branches the root node into two nodes in-place, such that the previous
+    /// root node and the sibling node become children of the new root node.
     pub(crate) unsafe fn branch(
         &self,
         root: &mut Node<N, D, Key, Value>,
@@ -190,7 +220,16 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         let mut next_root_children = self.inner.new();
         self.inner.push(&mut next_root_children, ptr::read(root));
         self.inner.push(&mut next_root_children, sibling);
-        ptr::write(root, Node::new(bounds, next_root_children, level));
+        ptr::write(
+            root,
+            Node::new(
+                bounds,
+                NodeChildren {
+                    inner: ManuallyDrop::new(next_root_children),
+                },
+                level,
+            ),
+        );
     }
 
     /// Tries to unbranch the root node in-place, such that the root node becomes
@@ -208,8 +247,8 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     where
         N: num_traits::Bounded,
     {
-        if level > 0 && root.children.len() == 1 {
-            let new_root = self.inner.remove(&mut root.children, 0);
+        if level > 0 && root.children.inner.len() == 1 {
+            let new_root = self.inner.remove(&mut root.children.inner, 0);
             unsafe {
                 self.drop(root, level);
             }
@@ -234,31 +273,48 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         let entry_bounds = entry.bounds();
         match entry {
             NodeEntry::Inner(node_container) => {
-                if node.children.len() < self.inner.cap() {
-                    self.inner.push(&mut node.children, node_container.unwrap());
-                    node.bounds = min_bounds(&node.bounds, &entry_bounds);
-                    None
-                } else {
+                if let Some(overflow_node) = self
+                    .inner
+                    .try_push(&mut node.children.inner, node_container.unwrap())
+                {
                     let (new_bounds, sibling_bounds, sibling_children) = split::quadratic_n(
                         min_children,
                         &self.inner,
-                        node_container.unwrap(),
-                        &mut node.children,
+                        overflow_node,
+                        &mut node.children.inner,
                     );
                     node.bounds = new_bounds;
-                    Some(Node::new(sibling_bounds, sibling_children, level))
+                    Some(Node::new(
+                        sibling_bounds,
+                        NodeChildren {
+                            inner: ManuallyDrop::new(sibling_children),
+                        },
+                        level,
+                    ))
+                } else {
+                    node.bounds = min_bounds(&node.bounds, &entry_bounds);
+                    None
                 }
             }
             NodeEntry::Leaf(entry) => {
-                if node.children.len() < self.leaf.cap() {
-                    self.leaf.push(&mut node.children, entry);
+                if let Some(overflow_entry) = self.leaf.try_push(&mut node.children.leaf, entry) {
+                    let (new_bounds, sibling_bounds, sibling_children) = split::quadratic_n(
+                        min_children,
+                        &self.leaf,
+                        overflow_entry,
+                        &mut node.children.leaf,
+                    );
+                    node.bounds = new_bounds;
+                    Some(Node::new(
+                        sibling_bounds,
+                        NodeChildren {
+                            leaf: ManuallyDrop::new(sibling_children),
+                        },
+                        level,
+                    ))
+                } else {
                     node.bounds = min_bounds(&node.bounds, &entry_bounds);
                     None
-                } else {
-                    let (new_bounds, sibling_bounds, sibling_children) =
-                        split::quadratic_n(min_children, &self.leaf, entry, &mut node.children);
-                    node.bounds = new_bounds;
-                    Some(Node::new(sibling_bounds, sibling_children, level))
                 }
             }
         }
@@ -281,21 +337,14 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             let mut insert_child = NodeRefMut::new(
                 self,
                 depth - 1,
-                select::minimal_volume_increase(
-                    self.inner.as_slice_mut(&mut node.children),
-                    &entry.bounds(),
-                )
-                .unwrap(),
+                select::minimal_volume_increase((*node.children.inner).iter_mut(), &entry.bounds())
+                    .unwrap(),
             );
             if let Some(new_child) = insert_child.insert(min_children, entry) {
                 // The child node split, so the entries in new_child are no longer part of self
                 // Recompute the bounds of self before trying to insert new_child into self
-                node.bounds = min_bounds_all(
-                    self.inner
-                        .as_slice(&node.children)
-                        .iter()
-                        .map(|child| child.bounds()),
-                );
+                node.bounds =
+                    min_bounds_all(node.children.inner.iter().map(|child| child.bounds()));
                 self.self_insert(node, level, min_children, NodeEntry::Inner(new_child))
             } else {
                 node.bounds = min_bounds(&node.bounds, &entry_bounds);
@@ -320,33 +369,24 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         Value: Eq,
     {
         if level > 0 {
-            let mut i = node.children.len();
+            let mut i = node.children.inner.len();
             while i > 0 {
                 i -= 1;
-                if self
-                    .inner
-                    .at(&node.children, i)
-                    .bounds
-                    .intersects(&key.bounds())
-                {
+                if node.children.inner[i].bounds.intersects(&key.bounds()) {
                     if let Some(value) = self.remove(
-                        self.inner.at_mut(&mut node.children, i),
+                        &mut (*node.children.inner)[i],
                         min_children,
                         level - 1,
                         key,
                         underfull_nodes,
                     ) {
-                        if self.inner.at(&node.children, i).children.len() < min_children {
-                            let removed_child = self.inner.swap_remove(&mut node.children, i);
+                        if node.children.inner[i].children.len(level - 1) < min_children {
+                            let removed_child = (*node.children.inner).swap_remove(i);
                             underfull_nodes[level - 1] = Some(removed_child);
                         }
 
-                        node.bounds = min_bounds_all(
-                            self.inner
-                                .as_slice(&node.children)
-                                .iter()
-                                .map(|child| child.bounds()),
-                        );
+                        node.bounds =
+                            min_bounds_all(node.children.inner.iter().map(|child| child.bounds()));
 
                         return Some(value);
                     }
@@ -354,19 +394,11 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             }
             return None;
         } else {
-            let index = self
-                .leaf
-                .as_slice(&node.children)
-                .iter()
-                .position(|(k, v)| k == key);
+            let index = node.children.leaf.iter().position(|(k, _)| k == key);
             if let Some(i) = index {
-                let value = self.leaf.swap_remove(&mut node.children, i).1;
-                node.bounds = min_bounds_all(
-                    self.leaf
-                        .as_slice(&node.children)
-                        .iter()
-                        .map(|(key, _)| key.bounds()),
-                );
+                let value = self.leaf.swap_remove(&mut node.children.leaf, i).1;
+                node.bounds =
+                    min_bounds_all(node.children.leaf.iter().map(|(key, _)| key.bounds()));
 
                 return Some(value);
             }
@@ -376,12 +408,14 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
 
     pub(crate) unsafe fn drop(&self, node: &mut Node<N, D, Key, Value>, level: usize) {
         if level > 0 {
-            for child in self.inner.as_slice_mut(&mut node.children) {
+            let mut children = ManuallyDrop::take(&mut node.children.inner);
+            for child in children.iter_mut() {
                 self.drop(child, level - 1);
             }
-            self.inner.drop(&mut node.children);
+            self.inner.drop(&mut children);
         } else {
-            self.leaf.drop(&mut node.children);
+            let mut children = ManuallyDrop::take(&mut node.children.leaf);
+            self.leaf.drop(&mut children);
         }
     }
 
@@ -397,25 +431,37 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     {
         if level > 0 {
             let mut clone_children = self.inner.new();
-            for child in self.inner.as_slice(&node.children) {
+            for child in node.children.inner.iter() {
                 self.inner
                     .push(&mut clone_children, self.clone(child, level - 1));
             }
-            Node::new(node.bounds.clone(), clone_children, level)
+            Node::new(
+                node.bounds.clone(),
+                NodeChildren {
+                    inner: ManuallyDrop::new(clone_children),
+                },
+                level,
+            )
         } else {
-            Node::new(node.bounds.clone(), self.leaf.clone(&node.children), level)
+            Node::new(
+                node.bounds.clone(),
+                NodeChildren {
+                    leaf: ManuallyDrop::new(self.leaf.clone(&node.children.leaf)),
+                },
+                level,
+            )
         }
     }
 
     pub(crate) unsafe fn len(&self, node: &Node<N, D, Key, Value>, level: usize) -> usize {
         if level > 0 {
             let mut size = 0;
-            for child in self.inner.as_slice(&node.children) {
+            for child in node.children.inner.iter() {
                 size += self.len(child, level - 1);
             }
             size
         } else {
-            node.children.len()
+            node.children.leaf.len()
         }
     }
 
@@ -430,7 +476,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         Key: Eq + Bounded<N, D>,
     {
         if level > 0 {
-            for child in self.inner.as_slice(&node.children) {
+            for child in node.children.inner.iter() {
                 if child.bounds.contains(&key.bounds()) {
                     if let Some(value) = self.get(child, level - 1, key) {
                         return Some(value);
@@ -439,8 +485,8 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             }
             None
         } else {
-            self.leaf
-                .as_slice(&node.children)
+            node.children
+                .leaf
                 .iter()
                 .find(|(k, _)| k == key)
                 .map(|(_, v)| v)
@@ -458,7 +504,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         Key: Eq + Bounded<N, D>,
     {
         if level > 0 {
-            for child in self.inner.as_slice_mut(&mut node.children) {
+            for child in (*node.children.inner).iter_mut() {
                 if child.bounds.contains(&key.bounds()) {
                     if let Some(value) = self.get_mut(child, level - 1, key) {
                         return Some(value);
@@ -467,8 +513,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             }
             None
         } else {
-            self.leaf
-                .as_slice_mut(&mut node.children)
+            (*node.children.leaf)
                 .iter_mut()
                 .find(|(k, _)| k == key)
                 .map(|(_, v)| v)
@@ -490,9 +535,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         let entry_bounds = key.bounds();
         if level > 0 {
             // Check which children contain the key bounds
-            let children_containing_key = self
-                .inner
-                .as_slice_mut(&mut node.children)
+            let children_containing_key = (*node.children.inner)
                 .iter_mut()
                 .filter(|child| child.bounds.contains(&entry_bounds));
             match get_only(children_containing_key) {
@@ -523,10 +566,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                             // The child node split, so the entries in new_child are no longer part of self
                             // Recompute the bounds of self before trying to insert new_child into self
                             node.bounds = min_bounds_all(
-                                self.inner
-                                    .as_slice(&node.children)
-                                    .iter()
-                                    .map(|child| child.bounds()),
+                                node.children.leaf.iter().map(|child| child.bounds()),
                             );
                             self.self_insert(node, level, min_children, NodeEntry::Inner(new_child))
                         } else {
@@ -558,12 +598,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         } else {
             // Try to find the key among the children and overwrite it if it
             // exists. If it doesn't exist, perform a regular insert.
-            if let Some(entry) = self
-                .leaf
-                .as_slice_mut(&mut node.children)
-                .iter_mut()
-                .find(|(k, _)| k == &key)
-            {
+            if let Some(entry) = (*node.children.leaf).iter_mut().find(|(k, _)| k == &key) {
                 (Some(std::mem::replace(&mut entry.1, value)), None)
             } else {
                 (
@@ -836,7 +871,7 @@ where
 pub(crate) struct NodeChildrenRef<'a, 'b, N, const D: usize, Key, Value> {
     ops: &'a NodeOps<N, D, Key, Value>,
     level: usize,
-    children: &'b FCVec,
+    children: &'b NodeChildren<N, D, Key, Value>,
 
     _phantom: PhantomData<&'b (N, Key, Value)>,
 }
@@ -851,7 +886,7 @@ where
         if self.level > 0 {
             f.debug_list()
                 .entries(unsafe {
-                    fc_vec::Iter::<Node<N, D, Key, Value>>::new(self.children).map(|node| NodeRef {
+                    self.children.inner.iter().map(|node| NodeRef {
                         ops: self.ops,
                         level: self.level - 1,
                         node,
@@ -860,10 +895,7 @@ where
                 .finish()
         } else {
             f.debug_list()
-                .entries(unsafe {
-                    fc_vec::Iter::<(Key, Value)>::new(self.children)
-                        .map(|(key, value)| (key, value))
-                })
+                .entries(unsafe { self.children.leaf.iter().map(|(key, value)| (key, value)) })
                 .finish()
         }
     }

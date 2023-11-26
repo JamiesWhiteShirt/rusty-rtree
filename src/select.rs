@@ -14,14 +14,14 @@ where
 }
 
 pub fn minimal_volume_increase<'a, N, const D: usize, Value>(
-    children: &'a mut [Value],
+    children: impl Iterator<Item = &'a mut Value>,
     bounds: &Bounds<N, D>,
 ) -> Option<&'a mut Value>
 where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
     Value: Bounded<N, D>,
 {
-    children.iter_mut().min_by(|lhs, rhs| {
+    children.min_by(|lhs, rhs| {
         // Optimize for minimal volume increase
         let cmp = N64::cmp(
             &lhs.bounds().volume_increase_of_min_bounds(bounds),

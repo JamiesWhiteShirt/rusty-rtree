@@ -142,8 +142,8 @@ pub(crate) unsafe fn quadratic_n<'a, 'b, N, const D: usize, Value>(
     min_children: usize,
     ops: &FCVecOps<Value>,
     overflow_value: Value,
-    values: &mut FCVec,
-) -> (Bounds<N, D>, Bounds<N, D>, FCVec)
+    values: &mut FCVec<Value>,
+) -> (Bounds<N, D>, Bounds<N, D>, FCVec<Value>)
 where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
     Value: Bounded<N, D>,
@@ -155,9 +155,9 @@ where
     let mut group_2 = ops.new();
     ops.push(
         &mut group_2,
-        seed_split_groups(ops.as_slice_mut(values), overflow_value),
+        seed_split_groups(&mut *values, overflow_value),
     );
-    let (mut bounds_1, mut bounds_2) = (ops.at(values, 0).bounds(), ops.at(&group_2, 0).bounds());
+    let (mut bounds_1, mut bounds_2) = (values[0].bounds(), group_2[0].bounds());
 
     let mut group_1_len = 1;
     // children is now partitioned such that children[0..group_1_len] is group_1
@@ -165,7 +165,7 @@ where
     // into groups.
     // When the loop terminates, children is group_1.
     while group_1_len < values.len() {
-        let remaining = &ops.as_slice(values)[group_1_len..];
+        let remaining = &values[group_1_len..];
         let (candidate_1, candidate_2) = (
             best_candidate_for_group(remaining, &bounds_1).unwrap(),
             best_candidate_for_group(remaining, &bounds_2).unwrap(),

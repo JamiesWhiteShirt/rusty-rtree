@@ -1,10 +1,10 @@
-use std::{cmp::min, mem::ManuallyDrop};
+use std::{cmp::min, mem::ManuallyDrop, slice};
 
-use crate::{bounds::Bounded, fc_vec, filter::SpatialFilter, node::Node};
+use crate::{bounds::Bounded, filter::SpatialFilter, node::Node};
 
 union IterLevel<'a, N, const D: usize, Key, Value> {
-    inner: ManuallyDrop<fc_vec::Iter<'a, Node<N, D, Key, Value>>>,
-    leaf: ManuallyDrop<fc_vec::Iter<'a, (Key, Value)>>,
+    inner: ManuallyDrop<slice::Iter<'a, Node<N, D, Key, Value>>>,
+    leaf: ManuallyDrop<slice::Iter<'a, (Key, Value)>>,
 }
 
 pub struct Iter<'a, N, const D: usize, Key, Value> {
@@ -21,11 +21,11 @@ impl<'a, N, const D: usize, Key, Value> Iter<'a, N, D, Key, Value> {
         let mut stack = Vec::with_capacity(height);
         stack.push(if height > 0 {
             IterLevel {
-                inner: ManuallyDrop::new(fc_vec::Iter::new(root.children())),
+                inner: ManuallyDrop::new(root.inner_children().iter()),
             }
         } else {
             IterLevel {
-                leaf: ManuallyDrop::new(fc_vec::Iter::new(root.children())),
+                leaf: ManuallyDrop::new(root.leaf_children().iter()),
             }
         });
         Iter { height, stack }
@@ -72,11 +72,11 @@ impl<'a, N, const D: usize, Key, Value> Iterator for Iter<'a, N, D, Key, Value> 
                 if let Some(node) = (*unsafe { &mut self.stack.last_mut().unwrap().inner }).next() {
                     self.stack.push(if level > 1 {
                         IterLevel {
-                            inner: ManuallyDrop::new(unsafe { fc_vec::Iter::new(node.children()) }),
+                            inner: ManuallyDrop::new(unsafe { node.inner_children() }.iter()),
                         }
                     } else {
                         IterLevel {
-                            leaf: ManuallyDrop::new(unsafe { fc_vec::Iter::new(node.children()) }),
+                            leaf: ManuallyDrop::new(unsafe { node.leaf_children() }.iter()),
                         }
                     })
                 } else {
@@ -114,11 +114,11 @@ impl<'a, N, const D: usize, Key, Value, Filter> FilterIter<'a, N, D, Key, Value,
         let mut stack = Vec::with_capacity(height);
         stack.push(if height > 1 {
             IterLevel {
-                inner: ManuallyDrop::new(fc_vec::Iter::new(root.children())),
+                inner: ManuallyDrop::new(root.inner_children().iter()),
             }
         } else {
             IterLevel {
-                leaf: ManuallyDrop::new(fc_vec::Iter::new(root.children())),
+                leaf: ManuallyDrop::new(root.leaf_children().iter()),
             }
         });
         FilterIter {
@@ -180,11 +180,11 @@ where
                 {
                     self.stack.push(if level > 1 {
                         IterLevel {
-                            inner: ManuallyDrop::new(unsafe { fc_vec::Iter::new(node.children()) }),
+                            inner: ManuallyDrop::new(unsafe { node.inner_children() }.iter()),
                         }
                     } else {
                         IterLevel {
-                            leaf: ManuallyDrop::new(unsafe { fc_vec::Iter::new(node.children()) }),
+                            leaf: ManuallyDrop::new(unsafe { node.leaf_children() }.iter()),
                         }
                     })
                 } else {
