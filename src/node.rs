@@ -145,7 +145,7 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
             );
         }
         if level > 0 {
-            for child in self.children.inner.iter() {
+            for child in &*self.children.inner {
                 child.debug_assert_min_children(level - 1, min_children, false);
             }
         }
@@ -431,7 +431,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     {
         if level > 0 {
             let mut clone_children = self.inner.new();
-            for child in node.children.inner.iter() {
+            for child in &*node.children.inner {
                 self.inner
                     .push(&mut clone_children, self.clone(child, level - 1));
             }
@@ -456,7 +456,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     pub(crate) unsafe fn len(&self, node: &Node<N, D, Key, Value>, level: usize) -> usize {
         if level > 0 {
             let mut size = 0;
-            for child in node.children.inner.iter() {
+            for child in &*node.children.inner {
                 size += self.len(child, level - 1);
             }
             size
@@ -476,7 +476,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         Key: Eq + Bounded<N, D>,
     {
         if level > 0 {
-            for child in node.children.inner.iter() {
+            for child in &*node.children.inner {
                 if child.bounds.contains(&key.bounds()) {
                     if let Some(value) = self.get(child, level - 1, key) {
                         return Some(value);

@@ -212,7 +212,7 @@ where
             if height > 0 {
                 if let Some(undefull_leaf) = underfull_nodes[0].take() {
                     let children = unsafe { ops.take_leaf_children(undefull_leaf) };
-                    for leaf_entry in children.into_iter() {
+                    for leaf_entry in children {
                         unsafe {
                             self.insert_entry(0, NodeEntry::Leaf(leaf_entry));
                         }
@@ -224,7 +224,7 @@ where
             for level in 1..height {
                 if let Some(children) = underfull_nodes[level].take() {
                     let children = unsafe { ops.take_inner_children(children) };
-                    for node in children.into_iter() {
+                    for node in children {
                         unsafe {
                             self.insert_entry(
                                 level,
