@@ -165,7 +165,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn emtpy_leaf(&self) -> Node<N, D, Key, Value>
+    pub(crate) unsafe fn empty_leaf(&self) -> Node<N, D, Key, Value>
     where
         N: num_traits::Bounded,
     {

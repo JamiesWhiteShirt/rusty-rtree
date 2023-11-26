@@ -97,7 +97,7 @@ where
         let ops = NodeOps::<N, D, Key, Value>::new_ops(config.max_children);
         return RTree {
             height: 0,
-            root: unsafe { ops.emtpy_leaf() },
+            root: unsafe { ops.empty_leaf() },
             config,
         };
     }
