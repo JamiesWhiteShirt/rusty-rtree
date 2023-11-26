@@ -5,7 +5,7 @@ use num_traits::Float;
 
 use crate::{
     bounds::{min_bounds, Bounded, Bounds},
-    fc_vec::{FCVec, FCVecOps},
+    fc_vec::{FCVec, FCVecContainer, FCVecOps, FCVecRefMut},
 };
 
 /// Returns a pair of indices (a, b) where a < b. b is therefore also never zero.
@@ -140,10 +140,9 @@ where
 /// bounds.
 pub(crate) unsafe fn quadratic_n<'a, 'b, N, const D: usize, Value>(
     min_children: usize,
-    ops: &FCVecOps<Value>,
+    mut values: FCVecRefMut<'a, 'b, Value>,
     overflow_value: Value,
-    values: &mut FCVec<Value>,
-) -> (Bounds<N, D>, Bounds<N, D>, FCVec<Value>)
+) -> (Bounds<N, D>, Bounds<N, D>, FCVecContainer<'a, Value>)
 where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
     Value: Bounded<N, D>,
@@ -152,11 +151,8 @@ where
         panic!("Must have more than 2 children to split!");
     }
 
-    let mut group_2 = ops.new();
-    ops.push(
-        &mut group_2,
-        seed_split_groups(&mut *values, overflow_value),
-    );
+    let mut group_2 = values.ops().new();
+    group_2.push(seed_split_groups(&mut *values, overflow_value));
     let (mut bounds_1, mut bounds_2) = (values[0].bounds(), group_2[0].bounds());
 
     let mut group_1_len = 1;
@@ -179,15 +175,12 @@ where
 
         if add_to_group_1 {
             bounds_1 = min_bounds(&bounds_1, &remaining[candidate_1.0].bounds());
-            ops.swap(values, group_1_len + candidate_1.0, group_1_len);
+            values.swap(group_1_len + candidate_1.0, group_1_len);
             group_1_len += 1;
         } else {
             bounds_2 = min_bounds(&bounds_2, &remaining[candidate_2.0].bounds());
             // TODO: Can this be a swap_remove?
-            ops.push(
-                &mut group_2,
-                ops.remove(values, group_1_len + candidate_2.0),
-            )
+            group_2.push(values.remove(group_1_len + candidate_2.0))
         }
     }
 
