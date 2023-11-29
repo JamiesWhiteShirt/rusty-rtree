@@ -17,7 +17,7 @@ mod vector;
 use bounds::Bounded;
 use filter::SpatialFilter;
 use iter::FilterIter;
-use node::{Node, NodeContainer, NodeEntry, NodeOps, NodeRef, NodeRefMut};
+use node::{Node, NodeContainer, NodeEntry, NodeOps};
 use std::{fmt::Debug, ops::Sub};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -61,9 +61,7 @@ where
         let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
         f.debug_struct("RTree")
             .field("config", &self.config)
-            .field("root", unsafe {
-                &NodeRef::new(&ops, self.height, &self.root)
-            })
+            .field("root", unsafe { &ops.wrap_ref(&self.root, self.height) })
             .finish()
     }
 }
@@ -97,7 +95,7 @@ where
         let ops = NodeOps::<N, D, Key, Value>::new_ops(config.max_children);
         return RTree {
             height: 0,
-            root: unsafe { ops.empty_leaf() },
+            root: unsafe { ops.empty_leaf().unwrap() },
             config,
         };
     }
@@ -127,7 +125,7 @@ where
     /// Inserts an entry into a node at the given level.
     unsafe fn insert_entry(&mut self, level: usize, entry: NodeEntry<N, D, Key, Value>) {
         let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
-        if let Some(sibling) = unsafe {
+        let sibling = unsafe {
             ops.insert(
                 &mut self.root,
                 self.height,
@@ -135,7 +133,8 @@ where
                 self.height - level,
                 entry,
             )
-        } {
+        };
+        if let Some(sibling) = sibling {
             ops.branch(&mut self.root, self.height, sibling);
             self.height += 1;
         }
@@ -151,21 +150,14 @@ where
     where
         Key: Eq,
     {
-        unsafe {
-            let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
-            let (prev_value, sibling) = ops.insert_unique(
-                &mut self.root,
-                self.height,
-                self.config.min_children,
-                key,
-                value,
-            );
-            if let Some(sibling) = sibling {
-                ops.branch(&mut self.root, self.height, sibling);
-                self.height += 1;
-            }
-            prev_value
+        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
+        let mut root = unsafe { ops.wrap_ref_mut(&mut self.root, self.height) };
+        let (prev_value, sibling) = root.insert_unique(self.config.min_children, key, value);
+        if let Some(sibling) = sibling {
+            unsafe { ops.branch(&mut self.root, self.height, sibling) };
+            self.height += 1;
         }
+        prev_value
     }
 
     pub fn get(&self, key: &Key) -> Option<&Value>
@@ -173,8 +165,8 @@ where
         Key: Eq,
     {
         let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
-        let root_ref = unsafe { NodeRef::new(&ops, self.height, &self.root) };
-        root_ref.get(key)
+        let root = unsafe { ops.wrap_ref(&self.root, self.height) };
+        root.get(key)
     }
 
     pub fn get_mut(&mut self, key: &Key) -> Option<&mut Value>
@@ -182,8 +174,8 @@ where
         Key: Eq,
     {
         let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
-        let root_ref = unsafe { NodeRefMut::new(&ops, self.height, &mut self.root) };
-        root_ref.get_mut(key)
+        let root = unsafe { ops.wrap_ref_mut(&mut self.root, self.height) };
+        root.get_mut(key)
     }
 
     pub fn remove(&mut self, key: &Key) -> Option<Value>
@@ -211,7 +203,7 @@ where
             // reinsert entries at leaf level
             if height > 0 {
                 if let Some(undefull_leaf) = underfull_nodes[0].take() {
-                    let children = unsafe { ops.take_leaf_children(undefull_leaf) };
+                    let children = unsafe { ops.wrap(undefull_leaf, 0).take_leaf_children() };
                     for leaf_entry in children {
                         unsafe {
                             self.insert_entry(0, NodeEntry::Leaf(leaf_entry));
@@ -223,7 +215,7 @@ where
             // reinsert entries at inner levels
             for level in 1..height {
                 if let Some(children) = underfull_nodes[level].take() {
-                    let children = unsafe { ops.take_inner_children(children) };
+                    let children = unsafe { ops.wrap(children, level).take_inner_children() };
                     for node in children {
                         unsafe {
                             self.insert_entry(
@@ -242,8 +234,8 @@ where
 
     pub fn len(&self) -> usize {
         let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
-        let root_ref = unsafe { NodeRef::new(&ops, self.height, &self.root) };
-        root_ref.len()
+        let root = unsafe { ops.wrap_ref(&self.root, self.height) };
+        root.len()
     }
 
     fn debug_assert_bvh(&self)

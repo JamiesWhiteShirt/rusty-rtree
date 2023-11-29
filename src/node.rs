@@ -1,8 +1,15 @@
-use std::{fmt::Debug, marker::PhantomData, mem::ManuallyDrop, ops::Sub, ptr};
+use std::{
+    fmt::Debug,
+    marker::PhantomData,
+    mem::{self, ManuallyDrop},
+    num::NonZeroUsize,
+    ops::Sub,
+    ptr,
+};
 
 use crate::{
     bounds::{empty_bounds, min_bounds, min_bounds_all, Bounded, Bounds},
-    fc_vec::{FCVec, FCVecContainer, FCVecOps, FCVecRefMut},
+    fc_vec::{FCVec, FCVecContainer, FCVecOps},
     intersects::Intersects,
     select, split,
     util::{get_only, GetOnlyResult},
@@ -165,40 +172,55 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn empty_leaf(&self) -> Node<N, D, Key, Value>
+    pub(crate) fn empty_leaf<'a>(&'a self) -> NodeContainer<'a, N, D, Key, Value>
     where
         N: num_traits::Bounded,
     {
-        Node::new(
-            empty_bounds(),
-            NodeChildren {
-                leaf: ManuallyDrop::new(self.leaf.new().unwrap()),
-            },
-            0,
-        )
+        unsafe {
+            NodeContainer::new(
+                self,
+                0,
+                Node::new(
+                    empty_bounds(),
+                    NodeChildren {
+                        leaf: ManuallyDrop::new(self.leaf.new().unwrap()),
+                    },
+                    0,
+                ),
+            )
+        }
     }
 
-    pub(crate) unsafe fn empty_inner(&self, level: usize) -> Node<N, D, Key, Value>
+    pub(crate) unsafe fn empty_inner<'a>(
+        &'a self,
+        level: NonZeroUsize,
+    ) -> NodeContainer<'a, N, D, Key, Value>
     where
         N: num_traits::Bounded,
     {
-        Node::new(
-            empty_bounds(),
-            NodeChildren {
-                inner: ManuallyDrop::new(self.inner.new().unwrap()),
-            },
-            level,
-        )
+        unsafe {
+            NodeContainer::new(
+                self,
+                level.get(),
+                Node::new(
+                    empty_bounds(),
+                    NodeChildren {
+                        inner: ManuallyDrop::new(self.inner.new().unwrap()),
+                    },
+                    level.get(),
+                ),
+            )
+        }
     }
 
-    pub(crate) unsafe fn take_leaf_children(
+    unsafe fn take_leaf_children(
         &self,
         node: Node<N, D, Key, Value>,
     ) -> FCVecContainer<(Key, Value)> {
         self.leaf.wrap(ManuallyDrop::into_inner(node.children.leaf))
     }
 
-    pub(crate) unsafe fn take_inner_children(
+    unsafe fn take_inner_children(
         &self,
         node: Node<N, D, Key, Value>,
     ) -> FCVecContainer<Node<N, D, Key, Value>> {
@@ -208,18 +230,18 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
 
     /// Branches the root node into two nodes in-place, such that the previous
     /// root node and the sibling node become children of the new root node.
-    pub(crate) unsafe fn branch(
-        &self,
+    pub(crate) unsafe fn branch<'a>(
+        &'a self,
         root: &mut Node<N, D, Key, Value>,
         level: usize,
-        sibling: Node<N, D, Key, Value>,
+        sibling: NodeContainer<'a, N, D, Key, Value>,
     ) where
         N: Ord + Clone + Sub<Output = N> + Into<f64>,
     {
-        let bounds = min_bounds(&root.bounds, &sibling.bounds);
+        let bounds = min_bounds(&root.bounds, &sibling.node.bounds);
         let mut next_root_children = self.inner.new();
         next_root_children.push(ptr::read(root));
-        next_root_children.push(sibling);
+        next_root_children.push(sibling.unwrap());
         ptr::write(
             root,
             Node::new(
@@ -264,31 +286,35 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn self_insert<'a>(
-        &self,
-        node: &'a mut Node<N, D, Key, Value>,
+    unsafe fn self_insert<'a, 'b>(
+        &'a self,
+        node: &'b mut Node<N, D, Key, Value>,
         level: usize,
         min_children: usize,
         entry: NodeEntry<'a, N, D, Key, Value>,
-    ) -> Option<Node<N, D, Key, Value>>
+    ) -> Option<NodeContainer<'a, N, D, Key, Value>>
     where
         N: Ord + Clone + Sub<Output = N> + Into<f64>,
         Key: Bounded<N, D>,
     {
         let entry_bounds = entry.bounds();
         match entry {
-            NodeEntry::Inner(node_container) => {
+            NodeEntry::Inner(entry) => {
                 let mut children = self.inner.wrap_ref_mut(&mut node.children.inner);
-                if let Some(overflow_node) = children.try_push(node_container.unwrap()) {
+                if let Some(overflow_node) = children.try_push(entry.unwrap()) {
                     let (new_bounds, sibling_bounds, sibling_children) =
                         split::quadratic_n(min_children, children, overflow_node);
                     node.bounds = new_bounds;
-                    Some(Node::new(
-                        sibling_bounds,
-                        NodeChildren {
-                            inner: ManuallyDrop::new(sibling_children.unwrap()),
-                        },
+                    Some(NodeContainer::new(
+                        self,
                         level,
+                        Node::new(
+                            sibling_bounds,
+                            NodeChildren {
+                                inner: ManuallyDrop::new(sibling_children.unwrap()),
+                            },
+                            level,
+                        ),
                     ))
                 } else {
                     node.bounds = min_bounds(&node.bounds, &entry_bounds);
@@ -301,12 +327,16 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                     let (new_bounds, sibling_bounds, sibling_children) =
                         split::quadratic_n(min_children, children, overflow_entry);
                     node.bounds = new_bounds;
-                    Some(Node::new(
-                        sibling_bounds,
-                        NodeChildren {
-                            leaf: ManuallyDrop::new(sibling_children.unwrap()),
-                        },
+                    Some(NodeContainer::new(
+                        self,
                         level,
+                        Node::new(
+                            sibling_bounds,
+                            NodeChildren {
+                                leaf: ManuallyDrop::new(sibling_children.unwrap()),
+                            },
+                            level,
+                        ),
                     ))
                 } else {
                     node.bounds = min_bounds(&node.bounds, &entry_bounds);
@@ -316,14 +346,14 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn insert<'a>(
-        &self,
-        node: &'a mut Node<N, D, Key, Value>,
+    pub(crate) unsafe fn insert<'a, 'b>(
+        &'a self,
+        node: &'b mut Node<N, D, Key, Value>,
         level: usize,
         min_children: usize,
         depth: usize,
         entry: NodeEntry<'a, N, D, Key, Value>,
-    ) -> Option<Node<N, D, Key, Value>>
+    ) -> Option<NodeContainer<'a, N, D, Key, Value>>
     where
         N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
         Key: Bounded<N, D>,
@@ -331,10 +361,9 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         let entry_bounds = entry.bounds();
         if depth > 0 {
             let mut children = self.inner.wrap_ref_mut(&mut node.children.inner);
-            let mut insert_child = NodeRefMut::new(
-                self,
-                depth - 1,
+            let mut insert_child = self.wrap_ref_mut(
                 select::minimal_volume_increase(children.iter_mut(), &entry.bounds()).unwrap(),
+                depth - 1,
             );
             if let Some(new_child) = insert_child.insert(min_children, entry) {
                 // The child node split, so the entries in new_child are no longer part of self
@@ -523,14 +552,14 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn insert_unique<'a>(
-        &self,
-        node: &'a mut Node<N, D, Key, Value>,
+    pub(crate) unsafe fn insert_unique<'a, 'b>(
+        &'a self,
+        node: &'b mut Node<N, D, Key, Value>,
         level: usize,
         min_children: usize,
         key: Key,
         value: Value,
-    ) -> (Option<Value>, Option<Node<N, D, Key, Value>>)
+    ) -> (Option<Value>, Option<NodeContainer<'a, N, D, Key, Value>>)
     where
         N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
         Key: Eq + Bounded<N, D>,
@@ -558,7 +587,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                     )
                 }
                 GetOnlyResult::Only(child) => {
-                    let mut child = NodeRefMut::new(self, level - 1, child);
+                    let mut child = self.wrap_ref_mut(child, level - 1);
                     // If there is only one children containing the key bounds,
                     // then we can maintain the uniqueness invariant by
                     // performing a unique insert into that child.
@@ -618,6 +647,38 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             }
         }
     }
+
+    pub(crate) unsafe fn wrap(
+        &self,
+        node: Node<N, D, Key, Value>,
+        level: usize,
+    ) -> NodeContainer<N, D, Key, Value> {
+        unsafe { NodeContainer::new(self, level, node) }
+    }
+
+    pub(crate) unsafe fn wrap_ref<'a, 'b>(
+        &'a self,
+        node: &'b Node<N, D, Key, Value>,
+        level: usize,
+    ) -> NodeRef<'a, 'b, N, D, Key, Value> {
+        NodeRef {
+            ops: self,
+            level,
+            node: node,
+        }
+    }
+
+    pub(crate) unsafe fn wrap_ref_mut<'a, 'b>(
+        &'a self,
+        node: &'b mut Node<N, D, Key, Value>,
+        level: usize,
+    ) -> NodeRefMut<'a, 'b, N, D, Key, Value> {
+        NodeRefMut {
+            ops: self,
+            level,
+            node: node,
+        }
+    }
 }
 
 pub(crate) struct NodeRefMut<'a, 'b, N, const D: usize, Key, Value> {
@@ -627,19 +688,7 @@ pub(crate) struct NodeRefMut<'a, 'b, N, const D: usize, Key, Value> {
 }
 
 impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value> {
-    pub(crate) unsafe fn new(
-        ops: &'a NodeOps<N, D, Key, Value>,
-        level: usize,
-        node: &'b mut Node<N, D, Key, Value>,
-    ) -> Self {
-        NodeRefMut {
-            ops,
-            level,
-            node: node,
-        }
-    }
-
-    unsafe fn insert(
+    pub(crate) unsafe fn insert(
         &mut self,
         min_children: usize,
         entry: NodeEntry<'a, N, D, Key, Value>,
@@ -651,7 +700,6 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
         unsafe {
             self.ops
                 .insert(&mut self.node, self.level, min_children, self.level, entry)
-                .map(|node| NodeContainer::new(self.ops, self.level, node))
         }
     }
 
@@ -699,10 +747,7 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
             let (prev_value, new_sibling) =
                 self.ops
                     .insert_unique(&mut self.node, self.level, min_children, key, value);
-            (
-                prev_value,
-                new_sibling.map(|node| NodeContainer::new(self.ops, self.level, node)),
-            )
+            (prev_value, new_sibling)
         }
     }
 }
@@ -725,7 +770,7 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<'a, N, D, Key, Value> {
     fn insert(
         &mut self,
         min_children: usize,
-        entry: NodeEntry<N, D, Key, Value>,
+        entry: NodeEntry<'a, N, D, Key, Value>,
     ) -> Option<NodeContainer<'a, N, D, Key, Value>>
     where
         N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
@@ -734,7 +779,6 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<'a, N, D, Key, Value> {
         unsafe {
             self.ops
                 .insert(&mut self.node, self.level, min_children, self.level, entry)
-                .map(|node| NodeContainer::new(self.ops, self.level, node))
         }
     }
 
@@ -760,17 +804,27 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<'a, N, D, Key, Value> {
         }
     }
 
-    pub(crate) fn get_ref(&self) -> NodeRef<N, D, Key, Value> {
-        unsafe { NodeRef::new(self.ops, self.level, &self.node) }
+    pub(crate) unsafe fn take_leaf_children(self) -> FCVecContainer<'a, (Key, Value)> {
+        if self.level > 0 {
+            panic!("Cannot take leaf children from an inner node");
+        }
+        let ops = ptr::read(&self.ops);
+        let node = ptr::read(&self.node);
+        mem::forget(self);
+        unsafe { ops.take_leaf_children(node) }
     }
 
-    pub(crate) fn get_ref_mut(&mut self) -> NodeRefMut<N, D, Key, Value> {
-        unsafe { NodeRefMut::new(self.ops, self.level, &mut self.node) }
+    pub(crate) unsafe fn take_inner_children(self) -> FCVecContainer<'a, Node<N, D, Key, Value>> {
+        if self.level == 0 {
+            panic!("Cannot take inner children from a leaf node");
+        }
+        let ops = ptr::read(&self.ops);
+        let node = ptr::read(&self.node);
+        mem::forget(self);
+        unsafe { ops.take_inner_children(node) }
     }
 
-    /**
-    Unwraps the node from the container without dropping it.
-    */
+    /// Unwraps the node from the container without dropping it.
     pub(crate) unsafe fn unwrap(self) -> Node<N, D, Key, Value> {
         let s = ManuallyDrop::new(self);
         std::ptr::read(&s.node)
@@ -828,14 +882,6 @@ pub(crate) struct NodeRef<'a, 'b, N, const D: usize, Key, Value> {
 }
 
 impl<'a, 'b, N, const D: usize, Key, Value> NodeRef<'a, 'b, N, D, Key, Value> {
-    pub(crate) unsafe fn new(
-        ops: &'a NodeOps<N, D, Key, Value>,
-        level: usize,
-        node: &'b Node<N, D, Key, Value>,
-    ) -> Self {
-        NodeRef { ops, level, node }
-    }
-
     pub(crate) fn len(&self) -> usize {
         unsafe { self.ops.len(self.node, self.level) }
     }
