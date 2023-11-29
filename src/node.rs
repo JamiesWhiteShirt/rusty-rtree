@@ -228,64 +228,6 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             .wrap(ManuallyDrop::into_inner(node.children.inner))
     }
 
-    /// Branches the root node into two nodes in-place, such that the previous
-    /// root node and the sibling node become children of the new root node.
-    pub(crate) unsafe fn branch<'a>(
-        &'a self,
-        root: &mut Node<N, D, Key, Value>,
-        level: usize,
-        sibling: NodeContainer<'a, N, D, Key, Value>,
-    ) where
-        N: Ord + Clone + Sub<Output = N> + Into<f64>,
-    {
-        let bounds = min_bounds(&root.bounds, &sibling.node.bounds);
-        let mut next_root_children = self.inner.new();
-        next_root_children.push(ptr::read(root));
-        next_root_children.push(sibling.unwrap());
-        ptr::write(
-            root,
-            Node::new(
-                bounds,
-                NodeChildren {
-                    inner: ManuallyDrop::new(next_root_children.unwrap()),
-                },
-                level,
-            ),
-        );
-    }
-
-    /// Tries to unbranch the root node in-place, such that the root node becomes
-    /// the only child of the previous root node.
-    ///
-    /// Returns `true` if the root node was unbranched and the height must be
-    /// decremented.
-    ///
-    /// Returns `false` if the root node could not be unbranched.
-    pub(crate) unsafe fn try_unbranch(
-        &self,
-        root: &mut Node<N, D, Key, Value>,
-        level: usize,
-    ) -> bool
-    where
-        N: num_traits::Bounded,
-    {
-        if level > 0 {
-            let mut children = self.inner.wrap_ref_mut(&mut root.children.inner);
-            if children.len() == 1 {
-                let new_root = children.remove(0);
-                unsafe {
-                    self.drop(root, level);
-                }
-                *root = new_root;
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    }
-
     unsafe fn self_insert<'a, 'b>(
         &'a self,
         node: &'b mut Node<N, D, Key, Value>,
@@ -390,7 +332,6 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     where
         N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
         Key: Bounded<N, D> + Eq,
-        Value: Eq,
     {
         if level > 0 {
             let mut children = self.inner.wrap_ref_mut(&mut node.children.inner);
@@ -646,6 +587,162 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                 )
             }
         }
+    }
+
+    /// Branches the root node into two nodes in-place, such that the previous
+    /// root node and the sibling node become children of the new root node.
+    unsafe fn root_branch<'a>(
+        &'a self,
+        root: &mut Node<N, D, Key, Value>,
+        height: &mut usize,
+        sibling: NodeContainer<'a, N, D, Key, Value>,
+    ) where
+        N: Ord + Clone + num_traits::Bounded,
+    {
+        let bounds = min_bounds(&root.bounds, &sibling.node.bounds);
+        let mut next_root_children = self.inner.new();
+        next_root_children.push(ptr::read(root));
+        next_root_children.push(sibling.unwrap());
+        ptr::write(
+            root,
+            Node::new(
+                bounds,
+                NodeChildren {
+                    inner: ManuallyDrop::new(next_root_children.unwrap()),
+                },
+                *height,
+            ),
+        );
+        *height += 1;
+    }
+
+    unsafe fn root_insert_entry(
+        &self,
+        root: &mut Node<N, D, Key, Value>,
+        height: &mut usize,
+        min_children: usize,
+        depth: usize, // TODO: Get rid of this argument
+        entry: NodeEntry<N, D, Key, Value>,
+    ) where
+        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+        Key: Bounded<N, D>,
+    {
+        if let Some(sibling) = self.insert(root, *height, min_children, *height - depth, entry) {
+            self.root_branch(root, height, sibling);
+        }
+    }
+
+    pub(crate) unsafe fn root_insert(
+        &self,
+        root: &mut Node<N, D, Key, Value>,
+        height: &mut usize,
+        min_children: usize,
+        key: Key,
+        value: Value,
+    ) where
+        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+        Key: Bounded<N, D>,
+    {
+        self.root_insert_entry(root, height, min_children, 0, NodeEntry::Leaf((key, value)));
+    }
+
+    pub(crate) unsafe fn root_insert_unique(
+        &self,
+        root: &mut Node<N, D, Key, Value>,
+        height: &mut usize,
+        min_children: usize,
+        key: Key,
+        value: Value,
+    ) -> Option<Value>
+    where
+        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+        Key: Eq + Bounded<N, D>,
+    {
+        let (prev_value, sibling) = self.insert_unique(root, *height, min_children, key, value);
+        if let Some(sibling) = sibling {
+            self.root_branch(root, height, sibling);
+        }
+        prev_value
+    }
+
+    /// Tries to unbranch the root node in-place, such that the root node becomes
+    /// the only child of the previous root node.
+    pub(crate) unsafe fn root_try_unbranch(
+        &self,
+        root: &mut Node<N, D, Key, Value>,
+        level: &mut usize,
+    ) where
+        N: num_traits::Bounded,
+    {
+        if *level > 0 {
+            let mut children = self.inner.wrap_ref_mut(&mut root.children.inner);
+            if children.len() == 1 {
+                let new_root = children.remove(0);
+                unsafe {
+                    self.drop(root, *level);
+                }
+                *root = new_root;
+                *level -= 1;
+            }
+        }
+    }
+
+    pub(crate) unsafe fn root_remove(
+        &self,
+        root: &mut Node<N, D, Key, Value>,
+        height: &mut usize,
+        min_children: usize,
+        key: &Key,
+    ) -> Option<Value>
+    where
+        N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
+        Key: Bounded<N, D> + Eq,
+    {
+        let original_height = *height;
+        let mut underfull_nodes: Box<[Option<Node<N, D, Key, Value>>]> =
+            std::iter::repeat_with(|| None).take(*height).collect();
+        if let Some(value) = self.remove(root, min_children, *height, key, &mut underfull_nodes) {
+            self.root_try_unbranch(root, height);
+
+            // reinsert entries at leaf level
+            if original_height > 0 {
+                if let Some(undefull_leaf) = underfull_nodes[0].take() {
+                    let children = unsafe { self.wrap(undefull_leaf, 0).take_leaf_children() };
+                    for leaf_entry in children {
+                        unsafe {
+                            self.root_insert_entry(
+                                root,
+                                height,
+                                min_children,
+                                0,
+                                NodeEntry::Leaf(leaf_entry),
+                            );
+                        }
+                    }
+                }
+            }
+
+            // reinsert entries at inner levels
+            for level in 1..original_height {
+                if let Some(children) = underfull_nodes[level].take() {
+                    let children = unsafe { self.wrap(children, level).take_inner_children() };
+                    for node in children {
+                        unsafe {
+                            self.root_insert_entry(
+                                root,
+                                height,
+                                min_children,
+                                level,
+                                NodeEntry::Inner(self.wrap(node, level - 1)),
+                            );
+                        }
+                    }
+                }
+            }
+
+            return Some(value);
+        }
+        return None;
     }
 
     pub(crate) unsafe fn wrap(
