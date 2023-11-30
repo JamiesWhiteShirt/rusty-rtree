@@ -181,8 +181,9 @@ where
     where
         N: Debug,
     {
+        let ops = self.ops();
         unsafe {
-            self.root.debug_assert_bvh(self.height);
+            ops.debug_assert_bvh(&self.root, self.height);
         }
     }
 
@@ -194,17 +195,16 @@ where
     {
         assert_eq!(a.config, b.config);
         assert_eq!(a.height, b.height);
-        unsafe { Node::<N, D, Key, Value>::debug_assert_eq(&a.root, &b.root, a.height) }
+        let ops = a.ops();
+        unsafe { ops.debug_assert_eq(&a.root, &b.root, a.height) }
     }
 
     fn debug_assert_min_children(&self)
     where
         N: Debug,
     {
-        unsafe {
-            self.root
-                .debug_assert_min_children(self.height, self.config.min_children, true);
-        }
+        let ops = self.ops();
+        unsafe { ops.debug_assert_min_children(&self.root, self.height, true) }
     }
 }
 

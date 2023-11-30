@@ -97,68 +97,6 @@ where
     }
 }
 
-impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
-    pub(crate) unsafe fn debug_assert_bvh(&self, level: usize) -> Bounds<N, D>
-    where
-        Key: Bounded<N, D>,
-        N: Ord + num_traits::Bounded + Clone + Eq + Debug,
-    {
-        let bounds = if level > 0 {
-            min_bounds_all(
-                self.children
-                    .inner
-                    .iter()
-                    .map(|node| node.debug_assert_bvh(level - 1)),
-            )
-        } else {
-            min_bounds_all(self.children.leaf.iter().map(|(key, _)| key.bounds()))
-        };
-        assert_eq!(self.bounds, bounds);
-        bounds
-    }
-
-    pub(crate) unsafe fn debug_assert_eq(a: &Self, b: &Self, level: usize)
-    where
-        N: Debug + Eq,
-        Key: Debug + Eq,
-        Value: Debug + Eq,
-    {
-        assert_eq!(a.bounds, b.bounds);
-        if level > 0 {
-            let a_children = &*b.children.inner;
-            let b_children = &*b.children.inner;
-            assert_eq!(a_children.len(), b_children.len());
-            for (a_child, b_child) in a_children.iter().zip(b_children.iter()) {
-                Self::debug_assert_eq(a_child, b_child, level - 1);
-            }
-        } else {
-            assert_eq!(*a.children.leaf, *b.children.leaf);
-        }
-    }
-
-    pub(crate) unsafe fn debug_assert_min_children(
-        &self,
-        level: usize,
-        min_children: usize,
-        is_root: bool,
-    ) {
-        if !is_root {
-            assert!(
-                if level > 0 {
-                    self.children.inner.len()
-                } else {
-                    self.children.leaf.len()
-                } >= min_children
-            );
-        }
-        if level > 0 {
-            for child in &*self.children.inner {
-                child.debug_assert_min_children(level - 1, min_children, false);
-            }
-        }
-    }
-}
-
 pub(crate) struct NodeOps<N, const D: usize, Key, Value> {
     leaf: FCVecOps<(Key, Value)>,
     inner: FCVecOps<Node<N, D, Key, Value>>,
@@ -171,6 +109,80 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             leaf: FCVecOps::new_ops(max_children),
             inner: FCVecOps::new_ops(max_children),
             min_children,
+        }
+    }
+
+    pub(crate) unsafe fn debug_assert_bvh(
+        &self,
+        node: &Node<N, D, Key, Value>,
+        level: usize,
+    ) -> Bounds<N, D>
+    where
+        Key: Bounded<N, D>,
+        N: Ord + num_traits::Bounded + Clone + Eq + Debug,
+    {
+        let bounds = if level > 0 {
+            let children = self.inner.wrap_ref(&node.children.inner);
+            min_bounds_all(
+                children
+                    .iter()
+                    .map(|node| self.debug_assert_bvh(node, level - 1)),
+            )
+        } else {
+            let children = self.leaf.wrap_ref(&node.children.leaf);
+            min_bounds_all(children.iter().map(|(key, _)| key.bounds()))
+        };
+        assert_eq!(node.bounds, bounds);
+        bounds
+    }
+
+    pub(crate) unsafe fn debug_assert_eq(
+        &self,
+        a: &Node<N, D, Key, Value>,
+        b: &Node<N, D, Key, Value>,
+        level: usize,
+    ) where
+        N: Debug + Eq,
+        Key: Debug + Eq,
+        Value: Debug + Eq,
+    {
+        assert_eq!(a.bounds, b.bounds);
+        if level > 0 {
+            let a_children = self.inner.wrap_ref(&a.children.inner);
+            let b_children = self.inner.wrap_ref(&b.children.inner);
+            assert_eq!(a_children.len(), b_children.len());
+            for (a_child, b_child) in a_children.iter().zip(b_children.iter()) {
+                self.debug_assert_eq(a_child, b_child, level - 1);
+            }
+        } else {
+            let a_children = self.leaf.wrap_ref(&a.children.leaf);
+            let b_children = self.leaf.wrap_ref(&b.children.leaf);
+            assert_eq!(*a_children, *b_children);
+        }
+    }
+
+    pub(crate) unsafe fn debug_assert_min_children(
+        &self,
+        node: &Node<N, D, Key, Value>,
+        level: usize,
+        is_root: bool,
+    ) {
+        if !is_root {
+            assert!(
+                if level > 0 {
+                    let children = self.inner.wrap_ref(&node.children.inner);
+                    children.len()
+                } else {
+                    let children = self.leaf.wrap_ref(&node.children.leaf);
+                    children.len()
+                } >= self.min_children
+            );
+        }
+        if level > 0 {
+            let children = self.inner.wrap_ref(&node.children.inner);
+            for child in children {
+                self.debug_assert_min_children(child, level - 1, false);
+            }
         }
     }
 
