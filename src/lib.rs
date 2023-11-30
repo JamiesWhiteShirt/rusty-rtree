@@ -124,15 +124,8 @@ where
 {
     pub fn insert(&mut self, key: Key, value: Value) {
         let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
-        unsafe {
-            ops.root_insert(
-                &mut self.root,
-                &mut self.height,
-                self.config.min_children,
-                key,
-                value,
-            );
-        }
+        let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
+        root.insert(self.config.min_children, key, value)
     }
 
     pub fn insert_unique(&mut self, key: Key, value: Value) -> Option<Value>
@@ -140,15 +133,8 @@ where
         Key: Eq,
     {
         let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
-        unsafe {
-            ops.root_insert_unique(
-                &mut self.root,
-                &mut self.height,
-                self.config.min_children,
-                key,
-                value,
-            )
-        }
+        let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
+        root.insert_unique(self.config.min_children, key, value)
     }
 
     pub fn get(&self, key: &Key) -> Option<&Value>
@@ -175,14 +161,8 @@ where
         Value: Eq,
     {
         let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
-        unsafe {
-            ops.root_remove(
-                &mut self.root,
-                &mut self.height,
-                self.config.min_children,
-                key,
-            )
-        }
+        let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
+        root.remove(self.config.min_children, key)
     }
 
     pub fn len(&self) -> usize {

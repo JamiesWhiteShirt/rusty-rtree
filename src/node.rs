@@ -632,7 +632,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn root_insert(
+    unsafe fn root_insert(
         &self,
         root: &mut Node<N, D, Key, Value>,
         height: &mut usize,
@@ -646,7 +646,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         self.root_insert_entry(root, height, min_children, 0, NodeEntry::Leaf((key, value)));
     }
 
-    pub(crate) unsafe fn root_insert_unique(
+    unsafe fn root_insert_unique(
         &self,
         root: &mut Node<N, D, Key, Value>,
         height: &mut usize,
@@ -667,11 +667,8 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
 
     /// Tries to unbranch the root node in-place, such that the root node becomes
     /// the only child of the previous root node.
-    pub(crate) unsafe fn root_try_unbranch(
-        &self,
-        root: &mut Node<N, D, Key, Value>,
-        level: &mut usize,
-    ) where
+    unsafe fn root_try_unbranch(&self, root: &mut Node<N, D, Key, Value>, level: &mut usize)
+    where
         N: num_traits::Bounded,
     {
         if *level > 0 {
@@ -687,7 +684,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn root_remove(
+    unsafe fn root_remove(
         &self,
         root: &mut Node<N, D, Key, Value>,
         height: &mut usize,
@@ -776,6 +773,18 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             node: node,
         }
     }
+
+    pub(crate) unsafe fn wrap_root_ref_mut<'a, 'b>(
+        &'a self,
+        node: &'b mut Node<N, D, Key, Value>,
+        height: &'b mut usize,
+    ) -> RootNodeRefMut<'a, 'b, N, D, Key, Value> {
+        RootNodeRefMut {
+            ops: self,
+            height,
+            node: node,
+        }
+    }
 }
 
 pub(crate) struct NodeRefMut<'a, 'b, N, const D: usize, Key, Value> {
@@ -845,6 +854,52 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
                 self.ops
                     .insert_unique(&mut self.node, self.level, min_children, key, value);
             (prev_value, new_sibling)
+        }
+    }
+}
+
+pub(crate) struct RootNodeRefMut<'a, 'b, N, const D: usize, Key, Value> {
+    ops: &'a NodeOps<N, D, Key, Value>,
+    height: &'b mut usize,
+    node: &'b mut Node<N, D, Key, Value>,
+}
+
+impl<'a, 'b, N, const D: usize, Key, Value> RootNodeRefMut<'a, 'b, N, D, Key, Value> {
+    pub(crate) fn insert(&mut self, min_children: usize, key: Key, value: Value)
+    where
+        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+        Key: Bounded<N, D>,
+    {
+        unsafe {
+            self.ops
+                .root_insert(self.node, self.height, min_children, key, value)
+        }
+    }
+
+    pub(crate) fn insert_unique(
+        &mut self,
+        min_children: usize,
+        key: Key,
+        value: Value,
+    ) -> Option<Value>
+    where
+        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+        Key: Eq + Bounded<N, D>,
+    {
+        unsafe {
+            self.ops
+                .root_insert_unique(self.node, self.height, min_children, key, value)
+        }
+    }
+
+    pub(crate) fn remove(&mut self, min_children: usize, key: &Key) -> Option<Value>
+    where
+        N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
+        Key: Bounded<N, D> + Eq,
+    {
+        unsafe {
+            self.ops
+                .root_remove(self.node, self.height, min_children, key)
         }
     }
 }
