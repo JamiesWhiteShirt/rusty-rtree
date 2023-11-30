@@ -51,6 +51,12 @@ pub struct RTree<N, const D: usize, Key, Value> {
     root: Node<N, D, Key, Value>,
 }
 
+impl<N, const D: usize, Key, Value> RTree<N, D, Key, Value> {
+    fn ops(&self) -> NodeOps<N, D, Key, Value> {
+        NodeOps::<N, D, Key, Value>::new_ops(self.config.min_children, self.config.max_children)
+    }
+}
+
 impl<N, const D: usize, Key, Value> Debug for RTree<N, D, Key, Value>
 where
     N: Debug,
@@ -58,7 +64,7 @@ where
     Value: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
+        let ops = self.ops();
         f.debug_struct("RTree")
             .field("config", &self.config)
             .field("root", unsafe { &ops.wrap_ref(&self.root, self.height) })
@@ -68,7 +74,7 @@ where
 
 impl<N, const D: usize, Key, Value> Drop for RTree<N, D, Key, Value> {
     fn drop(&mut self) {
-        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
+        let ops = self.ops();
         unsafe {
             ops.drop(&mut self.root, self.height);
         }
@@ -92,7 +98,7 @@ where
     }
 
     pub fn new(config: RTreeConfig) -> RTree<N, D, Key, Value> {
-        let ops = NodeOps::<N, D, Key, Value>::new_ops(config.max_children);
+        let ops = NodeOps::<N, D, Key, Value>::new_ops(config.min_children, config.max_children);
         return RTree {
             height: 0,
             root: unsafe { ops.empty_leaf().unwrap() },
@@ -108,7 +114,7 @@ where
     Value: Clone,
 {
     fn clone(&self) -> Self {
-        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
+        let ops = self.ops();
         RTree {
             height: self.height,
             root: unsafe { ops.clone(&self.root, self.height) },
@@ -123,25 +129,25 @@ where
     Key: Bounded<N, D>,
 {
     pub fn insert(&mut self, key: Key, value: Value) {
-        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
+        let ops = self.ops();
         let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
-        root.insert(self.config.min_children, key, value)
+        root.insert(key, value)
     }
 
     pub fn insert_unique(&mut self, key: Key, value: Value) -> Option<Value>
     where
         Key: Eq,
     {
-        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
+        let ops = self.ops();
         let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
-        root.insert_unique(self.config.min_children, key, value)
+        root.insert_unique(key, value)
     }
 
     pub fn get(&self, key: &Key) -> Option<&Value>
     where
         Key: Eq,
     {
-        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
+        let ops = self.ops();
         let root = unsafe { ops.wrap_ref(&self.root, self.height) };
         root.get(key)
     }
@@ -150,7 +156,7 @@ where
     where
         Key: Eq,
     {
-        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
+        let ops = self.ops();
         let root = unsafe { ops.wrap_ref_mut(&mut self.root, self.height) };
         root.get_mut(key)
     }
@@ -160,13 +166,13 @@ where
         Key: Eq,
         Value: Eq,
     {
-        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
+        let ops = self.ops();
         let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
-        root.remove(self.config.min_children, key)
+        root.remove(key)
     }
 
     pub fn len(&self) -> usize {
-        let ops = NodeOps::<N, D, Key, Value>::new_ops(self.config.max_children);
+        let ops = self.ops();
         let root = unsafe { ops.wrap_ref(&self.root, self.height) };
         root.len()
     }

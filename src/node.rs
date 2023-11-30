@@ -162,13 +162,15 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
 pub(crate) struct NodeOps<N, const D: usize, Key, Value> {
     leaf: FCVecOps<(Key, Value)>,
     inner: FCVecOps<Node<N, D, Key, Value>>,
+    min_children: usize,
 }
 
 impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
-    pub(crate) fn new_ops(cap: usize) -> Self {
+    pub(crate) fn new_ops(min_children: usize, max_children: usize) -> Self {
         NodeOps {
-            leaf: FCVecOps::new_ops(cap),
-            inner: FCVecOps::new_ops(cap),
+            leaf: FCVecOps::new_ops(max_children),
+            inner: FCVecOps::new_ops(max_children),
+            min_children,
         }
     }
 
@@ -232,7 +234,6 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         &'a self,
         node: &'b mut Node<N, D, Key, Value>,
         level: usize,
-        min_children: usize,
         entry: NodeEntry<'a, N, D, Key, Value>,
     ) -> Option<NodeContainer<'a, N, D, Key, Value>>
     where
@@ -245,7 +246,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                 let mut children = self.inner.wrap_ref_mut(&mut node.children.inner);
                 if let Some(overflow_node) = children.try_push(entry.unwrap()) {
                     let (new_bounds, sibling_bounds, sibling_children) =
-                        split::quadratic_n(min_children, children, overflow_node);
+                        split::quadratic_n(self.min_children, children, overflow_node);
                     node.bounds = new_bounds;
                     Some(NodeContainer::new(
                         self,
@@ -267,7 +268,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                 let mut children = self.leaf.wrap_ref_mut(&mut node.children.leaf);
                 if let Some(overflow_entry) = children.try_push(entry) {
                     let (new_bounds, sibling_bounds, sibling_children) =
-                        split::quadratic_n(min_children, children, overflow_entry);
+                        split::quadratic_n(self.min_children, children, overflow_entry);
                     node.bounds = new_bounds;
                     Some(NodeContainer::new(
                         self,
@@ -292,7 +293,6 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         &'a self,
         node: &'b mut Node<N, D, Key, Value>,
         level: usize,
-        min_children: usize,
         depth: usize,
         entry: NodeEntry<'a, N, D, Key, Value>,
     ) -> Option<NodeContainer<'a, N, D, Key, Value>>
@@ -307,24 +307,23 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                 select::minimal_volume_increase(children.iter_mut(), &entry.bounds()).unwrap(),
                 depth - 1,
             );
-            if let Some(new_child) = insert_child.insert(min_children, entry) {
+            if let Some(new_child) = insert_child.insert(entry) {
                 // The child node split, so the entries in new_child are no longer part of self
                 // Recompute the bounds of self before trying to insert new_child into self
                 node.bounds = min_bounds_all(children.iter().map(|child| child.bounds()));
-                self.self_insert(node, level, min_children, NodeEntry::Inner(new_child))
+                self.self_insert(node, level, NodeEntry::Inner(new_child))
             } else {
                 node.bounds = min_bounds(&node.bounds, &entry_bounds);
                 None
             }
         } else {
-            self.self_insert(node, level, min_children, entry)
+            self.self_insert(node, level, entry)
         }
     }
 
     pub(crate) unsafe fn remove(
         &self,
         node: &mut Node<N, D, Key, Value>,
-        min_children: usize,
         level: usize,
         key: &Key,
         underfull_nodes: &mut [Option<Node<N, D, Key, Value>>],
@@ -339,14 +338,10 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             while i > 0 {
                 i -= 1;
                 if children[i].bounds.intersects(&key.bounds()) {
-                    if let Some(value) = self.remove(
-                        &mut children[i],
-                        min_children,
-                        level - 1,
-                        key,
-                        underfull_nodes,
-                    ) {
-                        if children[i].children.len(level - 1) < min_children {
+                    if let Some(value) =
+                        self.remove(&mut children[i], level - 1, key, underfull_nodes)
+                    {
+                        if children[i].children.len(level - 1) < self.min_children {
                             let removed_child = children.swap_remove(i);
                             underfull_nodes[level - 1] = Some(removed_child);
                         }
@@ -497,7 +492,6 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         &'a self,
         node: &'b mut Node<N, D, Key, Value>,
         level: usize,
-        min_children: usize,
         key: Key,
         value: Value,
     ) -> (Option<Value>, Option<NodeContainer<'a, N, D, Key, Value>>)
@@ -518,13 +512,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                     // the key cannot exist in the node.
                     (
                         None,
-                        self.insert(
-                            node,
-                            level,
-                            min_children,
-                            level,
-                            NodeEntry::Leaf((key, value)),
-                        ),
+                        self.insert(node, level, level, NodeEntry::Leaf((key, value))),
                     )
                 }
                 GetOnlyResult::Only(child) => {
@@ -532,7 +520,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                     // If there is only one children containing the key bounds,
                     // then we can maintain the uniqueness invariant by
                     // performing a unique insert into that child.
-                    let (old_value, new_child) = child.insert_unique(min_children, key, value);
+                    let (old_value, new_child) = child.insert_unique(key, value);
 
                     (
                         old_value,
@@ -541,7 +529,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                             // Recompute the bounds of self before trying to insert new_child into self
                             node.bounds =
                                 min_bounds_all(children.iter().map(|child| child.bounds()));
-                            self.self_insert(node, level, min_children, NodeEntry::Inner(new_child))
+                            self.self_insert(node, level, NodeEntry::Inner(new_child))
                         } else {
                             node.bounds = min_bounds(&node.bounds, &entry_bounds);
                             None
@@ -557,13 +545,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                     } else {
                         (
                             None,
-                            self.insert(
-                                node,
-                                level,
-                                min_children,
-                                level,
-                                NodeEntry::Leaf((key, value)),
-                            ),
+                            self.insert(node, level, level, NodeEntry::Leaf((key, value))),
                         )
                     }
                 }
@@ -577,13 +559,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             } else {
                 (
                     None,
-                    self.insert(
-                        node,
-                        level,
-                        min_children,
-                        level,
-                        NodeEntry::Leaf((key, value)),
-                    ),
+                    self.insert(node, level, level, NodeEntry::Leaf((key, value))),
                 )
             }
         }
@@ -620,14 +596,13 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         &self,
         root: &mut Node<N, D, Key, Value>,
         height: &mut usize,
-        min_children: usize,
         depth: usize, // TODO: Get rid of this argument
         entry: NodeEntry<N, D, Key, Value>,
     ) where
         N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
         Key: Bounded<N, D>,
     {
-        if let Some(sibling) = self.insert(root, *height, min_children, *height - depth, entry) {
+        if let Some(sibling) = self.insert(root, *height, *height - depth, entry) {
             self.root_branch(root, height, sibling);
         }
     }
@@ -636,21 +611,19 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         &self,
         root: &mut Node<N, D, Key, Value>,
         height: &mut usize,
-        min_children: usize,
         key: Key,
         value: Value,
     ) where
         N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
         Key: Bounded<N, D>,
     {
-        self.root_insert_entry(root, height, min_children, 0, NodeEntry::Leaf((key, value)));
+        self.root_insert_entry(root, height, 0, NodeEntry::Leaf((key, value)));
     }
 
     unsafe fn root_insert_unique(
         &self,
         root: &mut Node<N, D, Key, Value>,
         height: &mut usize,
-        min_children: usize,
         key: Key,
         value: Value,
     ) -> Option<Value>
@@ -658,7 +631,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
         Key: Eq + Bounded<N, D>,
     {
-        let (prev_value, sibling) = self.insert_unique(root, *height, min_children, key, value);
+        let (prev_value, sibling) = self.insert_unique(root, *height, key, value);
         if let Some(sibling) = sibling {
             self.root_branch(root, height, sibling);
         }
@@ -688,7 +661,6 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         &self,
         root: &mut Node<N, D, Key, Value>,
         height: &mut usize,
-        min_children: usize,
         key: &Key,
     ) -> Option<Value>
     where
@@ -698,7 +670,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         let original_height = *height;
         let mut underfull_nodes: Box<[Option<Node<N, D, Key, Value>>]> =
             std::iter::repeat_with(|| None).take(*height).collect();
-        if let Some(value) = self.remove(root, min_children, *height, key, &mut underfull_nodes) {
+        if let Some(value) = self.remove(root, *height, key, &mut underfull_nodes) {
             self.root_try_unbranch(root, height);
 
             // reinsert entries at leaf level
@@ -707,13 +679,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                     let children = unsafe { self.wrap(undefull_leaf, 0).take_leaf_children() };
                     for leaf_entry in children {
                         unsafe {
-                            self.root_insert_entry(
-                                root,
-                                height,
-                                min_children,
-                                0,
-                                NodeEntry::Leaf(leaf_entry),
-                            );
+                            self.root_insert_entry(root, height, 0, NodeEntry::Leaf(leaf_entry));
                         }
                     }
                 }
@@ -728,7 +694,6 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                             self.root_insert_entry(
                                 root,
                                 height,
-                                min_children,
                                 level,
                                 NodeEntry::Inner(self.wrap(node, level - 1)),
                             );
@@ -796,7 +761,6 @@ pub(crate) struct NodeRefMut<'a, 'b, N, const D: usize, Key, Value> {
 impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value> {
     pub(crate) unsafe fn insert(
         &mut self,
-        min_children: usize,
         entry: NodeEntry<'a, N, D, Key, Value>,
     ) -> Option<NodeContainer<'a, N, D, Key, Value>>
     where
@@ -805,13 +769,12 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
     {
         unsafe {
             self.ops
-                .insert(&mut self.node, self.level, min_children, self.level, entry)
+                .insert(&mut self.node, self.level, self.level, entry)
         }
     }
 
     fn remove(
         &mut self,
-        min_children: usize,
         key: &Key,
         underfull_nodes: &mut [Option<Node<N, D, Key, Value>>],
     ) -> Option<Value>
@@ -821,13 +784,8 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
         Value: Eq,
     {
         unsafe {
-            self.ops.remove(
-                &mut self.node,
-                min_children,
-                self.level,
-                key,
-                underfull_nodes,
-            )
+            self.ops
+                .remove(&mut self.node, self.level, key, underfull_nodes)
         }
     }
 
@@ -841,7 +799,6 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
 
     pub(crate) fn insert_unique(
         &mut self,
-        min_children: usize,
         key: Key,
         value: Value,
     ) -> (Option<Value>, Option<NodeContainer<'a, N, D, Key, Value>>)
@@ -852,7 +809,7 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
         unsafe {
             let (prev_value, new_sibling) =
                 self.ops
-                    .insert_unique(&mut self.node, self.level, min_children, key, value);
+                    .insert_unique(&mut self.node, self.level, key, value);
             (prev_value, new_sibling)
         }
     }
@@ -865,42 +822,31 @@ pub(crate) struct RootNodeRefMut<'a, 'b, N, const D: usize, Key, Value> {
 }
 
 impl<'a, 'b, N, const D: usize, Key, Value> RootNodeRefMut<'a, 'b, N, D, Key, Value> {
-    pub(crate) fn insert(&mut self, min_children: usize, key: Key, value: Value)
+    pub(crate) fn insert(&mut self, key: Key, value: Value)
     where
         N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
         Key: Bounded<N, D>,
     {
-        unsafe {
-            self.ops
-                .root_insert(self.node, self.height, min_children, key, value)
-        }
+        unsafe { self.ops.root_insert(self.node, self.height, key, value) }
     }
 
-    pub(crate) fn insert_unique(
-        &mut self,
-        min_children: usize,
-        key: Key,
-        value: Value,
-    ) -> Option<Value>
+    pub(crate) fn insert_unique(&mut self, key: Key, value: Value) -> Option<Value>
     where
         N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
         Key: Eq + Bounded<N, D>,
     {
         unsafe {
             self.ops
-                .root_insert_unique(self.node, self.height, min_children, key, value)
+                .root_insert_unique(self.node, self.height, key, value)
         }
     }
 
-    pub(crate) fn remove(&mut self, min_children: usize, key: &Key) -> Option<Value>
+    pub(crate) fn remove(&mut self, key: &Key) -> Option<Value>
     where
         N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
         Key: Bounded<N, D> + Eq,
     {
-        unsafe {
-            self.ops
-                .root_remove(self.node, self.height, min_children, key)
-        }
+        unsafe { self.ops.root_remove(self.node, self.height, key) }
     }
 }
 
@@ -921,7 +867,6 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<'a, N, D, Key, Value> {
 
     fn insert(
         &mut self,
-        min_children: usize,
         entry: NodeEntry<'a, N, D, Key, Value>,
     ) -> Option<NodeContainer<'a, N, D, Key, Value>>
     where
@@ -930,13 +875,12 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<'a, N, D, Key, Value> {
     {
         unsafe {
             self.ops
-                .insert(&mut self.node, self.level, min_children, self.level, entry)
+                .insert(&mut self.node, self.level, self.level, entry)
         }
     }
 
     fn remove(
         &mut self,
-        min_children: usize,
         key: &Key,
         underfully_nodes: &mut [Option<Node<N, D, Key, Value>>],
     ) -> Option<Value>
@@ -946,13 +890,8 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<'a, N, D, Key, Value> {
         Value: Eq,
     {
         unsafe {
-            self.ops.remove(
-                &mut self.node,
-                min_children,
-                self.level,
-                key,
-                underfully_nodes,
-            )
+            self.ops
+                .remove(&mut self.node, self.level, key, underfully_nodes)
         }
     }
 
