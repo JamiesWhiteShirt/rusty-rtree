@@ -45,13 +45,21 @@ pub struct RTreeConfig {
 /// # Safety
 ///
 /// Here be dragons. The R-tree is implemented using unsafe code.
-pub struct RTree<N, const D: usize, Key, Value> {
+pub struct RTree<N, const D: usize, Key, Value>
+where
+    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
+    Key: Bounded<N, D> + Eq,
+{
     config: RTreeConfig,
     height: usize,
     root: Node<N, D, Key, Value>,
 }
 
-impl<N, const D: usize, Key, Value> RTree<N, D, Key, Value> {
+impl<N, const D: usize, Key, Value> RTree<N, D, Key, Value>
+where
+    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
+    Key: Bounded<N, D> + Eq,
+{
     fn ops(&self) -> NodeOps<N, D, Key, Value> {
         NodeOps::<N, D, Key, Value>::new_ops(self.config.min_children, self.config.max_children)
     }
@@ -59,8 +67,8 @@ impl<N, const D: usize, Key, Value> RTree<N, D, Key, Value> {
 
 impl<N, const D: usize, Key, Value> Debug for RTree<N, D, Key, Value>
 where
-    N: Debug,
-    Key: Debug,
+    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64> + Debug,
+    Key: Bounded<N, D> + Eq + Debug,
     Value: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -72,7 +80,11 @@ where
     }
 }
 
-impl<N, const D: usize, Key, Value> Drop for RTree<N, D, Key, Value> {
+impl<N, const D: usize, Key, Value> Drop for RTree<N, D, Key, Value>
+where
+    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
+    Key: Bounded<N, D> + Eq,
+{
     fn drop(&mut self) {
         let ops = self.ops();
         unsafe {
@@ -83,8 +95,8 @@ impl<N, const D: usize, Key, Value> Drop for RTree<N, D, Key, Value> {
 
 impl<N, const D: usize, Key, Value> RTree<N, D, Key, Value>
 where
-    N: Ord + num_traits::Bounded,
-    Key: Bounded<N, D>,
+    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
+    Key: Bounded<N, D> + Eq,
 {
     pub fn iter<'a>(&'a self) -> iter::Iter<'a, N, D, Key, Value> {
         unsafe { iter::Iter::new(self.height, &self.root) }
@@ -109,8 +121,8 @@ where
 
 impl<N, const D: usize, Key, Value> Clone for RTree<N, D, Key, Value>
 where
-    N: Clone,
-    Key: Clone,
+    N: Ord + num_traits::Bounded + Sub<Output = N> + Into<f64> + Clone,
+    Key: Bounded<N, D> + Eq + Clone,
     Value: Clone,
 {
     fn clone(&self) -> Self {
@@ -126,7 +138,7 @@ where
 impl<N, const D: usize, Key, Value> RTree<N, D, Key, Value>
 where
     N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-    Key: Bounded<N, D>,
+    Key: Bounded<N, D> + Eq,
 {
     pub fn insert(&mut self, key: Key, value: Value) {
         let ops = self.ops();
@@ -134,38 +146,25 @@ where
         root.insert(key, value)
     }
 
-    pub fn insert_unique(&mut self, key: Key, value: Value) -> Option<Value>
-    where
-        Key: Eq,
-    {
+    pub fn insert_unique(&mut self, key: Key, value: Value) -> Option<Value> {
         let ops = self.ops();
         let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
         root.insert_unique(key, value)
     }
 
-    pub fn get(&self, key: &Key) -> Option<&Value>
-    where
-        Key: Eq,
-    {
+    pub fn get(&self, key: &Key) -> Option<&Value> {
         let ops = self.ops();
         let root = unsafe { ops.wrap_ref(&self.root, self.height) };
         root.get(key)
     }
 
-    pub fn get_mut(&mut self, key: &Key) -> Option<&mut Value>
-    where
-        Key: Eq,
-    {
+    pub fn get_mut(&mut self, key: &Key) -> Option<&mut Value> {
         let ops = self.ops();
         let root = unsafe { ops.wrap_ref_mut(&mut self.root, self.height) };
         root.get_mut(key)
     }
 
-    pub fn remove(&mut self, key: &Key) -> Option<Value>
-    where
-        Key: Eq,
-        Value: Eq,
-    {
+    pub fn remove(&mut self, key: &Key) -> Option<Value> {
         let ops = self.ops();
         let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
         root.remove(key)

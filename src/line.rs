@@ -8,6 +8,7 @@ use crate::{
     vector::Vector,
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line<N, const D: usize>(pub Vector<N, D>, pub Vector<N, D>);
 
 impl<N, const D: usize> Bounded<N, D> for Line<N, D>
