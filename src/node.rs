@@ -297,7 +297,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn insert<'a, 'b>(
+    unsafe fn insert<'a, 'b>(
         &'a self,
         node: &'b mut Node<N, D, Key, Value>,
         level: usize,
@@ -329,7 +329,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn remove(
+    unsafe fn remove(
         &self,
         node: &mut Node<N, D, Key, Value>,
         level: usize,
@@ -424,7 +424,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn len(&self, node: &Node<N, D, Key, Value>, level: usize) -> usize {
+    unsafe fn len(&self, node: &Node<N, D, Key, Value>, level: usize) -> usize {
         if level > 0 {
             let children = self.inner.wrap_ref(&node.children.inner);
             let mut size = 0;
@@ -438,7 +438,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn get<'a>(
+    unsafe fn get<'a>(
         &self,
         node: &'a Node<N, D, Key, Value>,
         level: usize,
@@ -467,7 +467,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn get_mut<'a>(
+    unsafe fn get_mut<'a>(
         &self,
         node: &'a mut Node<N, D, Key, Value>,
         level: usize,
@@ -496,7 +496,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn insert_unique<'a, 'b>(
+    unsafe fn insert_unique<'a, 'b>(
         &'a self,
         node: &'b mut Node<N, D, Key, Value>,
         level: usize,
