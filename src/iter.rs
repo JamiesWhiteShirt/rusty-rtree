@@ -41,9 +41,10 @@ impl<'a, N, const D: usize, Key, Value> Iter<'a, N, D, Key, Value> {
 
 impl<'a, N, const D: usize, Key, Value> Drop for Iter<'a, N, D, Key, Value> {
     fn drop(&mut self) {
-        for i in 0..min(self.stack.len(), self.height) {
+        let stack_len = self.stack.len();
+        for iter in &mut self.stack[0..min(stack_len, self.height)] {
             unsafe {
-                ManuallyDrop::drop(&mut self.stack[i].inner);
+                ManuallyDrop::drop(&mut iter.inner);
             }
         }
         if self.stack.len() == self.height + 1 {
@@ -77,6 +78,94 @@ impl<'a, N, const D: usize, Key, Value> Iterator for Iter<'a, N, D, Key, Value> 
                     } else {
                         IterLevel {
                             leaf: ManuallyDrop::new(unsafe { node.leaf_children() }.iter()),
+                        }
+                    })
+                } else {
+                    unsafe { ManuallyDrop::drop(&mut self.stack.pop().unwrap().inner) };
+                }
+            }
+        }
+        Option::None
+    }
+}
+
+union IterLevelMut<'a, N, const D: usize, Key, Value> {
+    inner: ManuallyDrop<slice::IterMut<'a, Node<N, D, Key, Value>>>,
+    leaf: ManuallyDrop<slice::IterMut<'a, (Key, Value)>>,
+}
+
+pub struct IterMut<'a, N, const D: usize, Key, Value> {
+    height: usize,
+    stack: Vec<IterLevelMut<'a, N, D, Key, Value>>,
+}
+
+impl<'a, N, const D: usize, Key, Value> IterMut<'a, N, D, Key, Value> {
+    pub(crate) unsafe fn new(
+        height: usize,
+        root: &'a mut Node<N, D, Key, Value>,
+    ) -> IterMut<'a, N, D, Key, Value> {
+        let mut stack = Vec::with_capacity(height);
+        stack.push(if height > 0 {
+            IterLevelMut {
+                inner: ManuallyDrop::new(root.inner_children_mut().iter_mut()),
+            }
+        } else {
+            IterLevelMut {
+                leaf: ManuallyDrop::new(root.leaf_children_mut().iter_mut()),
+            }
+        });
+        IterMut { height, stack }
+    }
+
+    pub(crate) fn empty() -> IterMut<'a, N, D, Key, Value> {
+        IterMut {
+            height: 0,
+            stack: Vec::new(),
+        }
+    }
+}
+
+impl<'a, N, const D: usize, Key, Value> Drop for IterMut<'a, N, D, Key, Value> {
+    fn drop(&mut self) {
+        let stack_len = self.stack.len();
+        for iter in &mut self.stack[0..min(stack_len, self.height)] {
+            unsafe {
+                ManuallyDrop::drop(&mut iter.inner);
+            }
+        }
+        if stack_len == self.height + 1 {
+            unsafe {
+                ManuallyDrop::drop(&mut self.stack[self.height].leaf);
+            }
+        }
+    }
+}
+
+impl<'a, N, const D: usize, Key, Value> Iterator for IterMut<'a, N, D, Key, Value> {
+    type Item = (&'a Key, &'a mut Value);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while !self.stack.is_empty() {
+            let level = (self.height + 1) - self.stack.len();
+            if level == 0 {
+                // Iterating over leaf node
+                if let Some(entry) = (*unsafe { &mut self.stack.last_mut().unwrap().leaf }).next() {
+                    return Some((&entry.0, &mut entry.1));
+                } else {
+                    unsafe { ManuallyDrop::drop(&mut self.stack.pop().unwrap().leaf) };
+                }
+            } else {
+                // Iterating over inner node
+                if let Some(node) = (*unsafe { &mut self.stack.last_mut().unwrap().inner }).next() {
+                    self.stack.push(if level > 1 {
+                        IterLevelMut {
+                            inner: ManuallyDrop::new(
+                                unsafe { node.inner_children_mut() }.iter_mut(),
+                            ),
+                        }
+                    } else {
+                        IterLevelMut {
+                            leaf: ManuallyDrop::new(unsafe { node.leaf_children_mut() }.iter_mut()),
                         }
                     })
                 } else {

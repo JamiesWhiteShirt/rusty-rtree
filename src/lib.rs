@@ -130,6 +130,11 @@ where
         unsafe { iter::Iter::new(self.height, &self.root) }
     }
 
+    /// Returns a mutable iterator over all entries in the R-tree.
+    pub fn iter_mut<'a>(&'a mut self) -> iter::IterMut<'a, N, D, Key, Value> {
+        unsafe { iter::IterMut::new(self.height, &mut self.root) }
+    }
+
     /// Returns an iterator over all entries in the R-tree using a spatial
     /// filter.
     pub fn filter_iter<'a, Filter: SpatialFilter<N, D, Key>>(

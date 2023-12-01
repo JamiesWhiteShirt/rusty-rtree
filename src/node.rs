@@ -73,8 +73,16 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
         &self.children.inner
     }
 
+    pub(crate) unsafe fn inner_children_mut(&mut self) -> &mut FCVec<Node<N, D, Key, Value>> {
+        &mut self.children.inner
+    }
+
     pub(crate) unsafe fn leaf_children(&self) -> &FCVec<(Key, Value)> {
         &self.children.leaf
+    }
+
+    pub(crate) unsafe fn leaf_children_mut(&mut self) -> &mut FCVec<(Key, Value)> {
+        &mut self.children.leaf
     }
 }
 
