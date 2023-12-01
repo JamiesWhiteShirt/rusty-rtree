@@ -191,9 +191,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         N: num_traits::Bounded,
     {
         unsafe {
-            NodeContainer::new(
-                self,
-                0,
+            self.wrap(
                 Node::new(
                     empty_bounds(),
                     NodeChildren {
@@ -201,6 +199,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                     },
                     0,
                 ),
+                0,
             )
         }
     }
@@ -213,9 +212,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         N: num_traits::Bounded,
     {
         unsafe {
-            NodeContainer::new(
-                self,
-                level.get(),
+            self.wrap(
                 Node::new(
                     empty_bounds(),
                     NodeChildren {
@@ -223,6 +220,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                     },
                     level.get(),
                 ),
+                level.get(),
             )
         }
     }
@@ -260,9 +258,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                     let (new_bounds, sibling_bounds, sibling_children) =
                         split::quadratic_n(self.min_children, children, overflow_node);
                     node.bounds = new_bounds;
-                    Some(NodeContainer::new(
-                        self,
-                        level,
+                    Some(self.wrap(
                         Node::new(
                             sibling_bounds,
                             NodeChildren {
@@ -270,6 +266,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                             },
                             level,
                         ),
+                        level,
                     ))
                 } else {
                     node.bounds = min_bounds(&node.bounds, &entry_bounds);
@@ -282,9 +279,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                     let (new_bounds, sibling_bounds, sibling_children) =
                         split::quadratic_n(self.min_children, children, overflow_entry);
                     node.bounds = new_bounds;
-                    Some(NodeContainer::new(
-                        self,
-                        level,
+                    Some(self.wrap(
                         Node::new(
                             sibling_bounds,
                             NodeChildren {
@@ -292,6 +287,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                             },
                             level,
                         ),
+                        level,
                     ))
                 } else {
                     node.bounds = min_bounds(&node.bounds, &entry_bounds);
@@ -724,7 +720,11 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         node: Node<N, D, Key, Value>,
         level: usize,
     ) -> NodeContainer<N, D, Key, Value> {
-        unsafe { NodeContainer::new(self, level, node) }
+        NodeContainer {
+            ops: self,
+            level,
+            node,
+        }
     }
 
     pub(crate) unsafe fn wrap_ref<'a, 'b>(
@@ -869,14 +869,6 @@ pub(crate) struct NodeContainer<'a, N, const D: usize, Key, Value> {
 }
 
 impl<'a, N, const D: usize, Key, Value> NodeContainer<'a, N, D, Key, Value> {
-    pub(crate) unsafe fn new(
-        ops: &'a NodeOps<N, D, Key, Value>,
-        level: usize,
-        node: Node<N, D, Key, Value>,
-    ) -> Self {
-        NodeContainer { ops, level, node }
-    }
-
     fn insert(
         &mut self,
         entry: NodeEntry<'a, N, D, Key, Value>,
