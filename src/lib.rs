@@ -93,32 +93,6 @@ where
     }
 }
 
-impl<N, const D: usize, Key, Value> RTree<N, D, Key, Value>
-where
-    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-    Key: Bounded<N, D> + Eq,
-{
-    pub fn iter<'a>(&'a self) -> iter::Iter<'a, N, D, Key, Value> {
-        unsafe { iter::Iter::new(self.height, &self.root) }
-    }
-
-    pub fn filter_iter<'a, Filter: SpatialFilter<N, D, Key>>(
-        &'a self,
-        filter: Filter,
-    ) -> FilterIter<'a, N, D, Key, Value, Filter> {
-        unsafe { FilterIter::new(self.height, &self.root, filter) }
-    }
-
-    pub fn new(config: RTreeConfig) -> RTree<N, D, Key, Value> {
-        let ops = NodeOps::<N, D, Key, Value>::new_ops(config.min_children, config.max_children);
-        return RTree {
-            height: 0,
-            root: unsafe { ops.empty_leaf().unwrap() },
-            config,
-        };
-    }
-}
-
 impl<N, const D: usize, Key, Value> Clone for RTree<N, D, Key, Value>
 where
     N: Ord + num_traits::Bounded + Sub<Output = N> + Into<f64> + Clone,
@@ -141,6 +115,30 @@ where
     N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
     Key: Bounded<N, D> + Eq,
 {
+    /// Returns a new empty R-tree.
+    pub fn new(config: RTreeConfig) -> RTree<N, D, Key, Value> {
+        let ops = NodeOps::<N, D, Key, Value>::new_ops(config.min_children, config.max_children);
+        return RTree {
+            height: 0,
+            root: unsafe { ops.empty_leaf().unwrap() },
+            config,
+        };
+    }
+
+    /// Returns an iterator over all entries in the R-tree.
+    pub fn iter<'a>(&'a self) -> iter::Iter<'a, N, D, Key, Value> {
+        unsafe { iter::Iter::new(self.height, &self.root) }
+    }
+
+    /// Returns an iterator over all entries in the R-tree using a spatial
+    /// filter.
+    pub fn filter_iter<'a, Filter: SpatialFilter<N, D, Key>>(
+        &'a self,
+        filter: Filter,
+    ) -> FilterIter<'a, N, D, Key, Value, Filter> {
+        unsafe { FilterIter::new(self.height, &self.root, filter) }
+    }
+
     // Inserts a new key-value pair into the R-tree, ignoring any existing
     // entries with the same key.
     pub fn insert(&mut self, key: Key, value: Value) {
