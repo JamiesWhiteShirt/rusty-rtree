@@ -141,36 +141,52 @@ where
     N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
     Key: Bounded<N, D> + Eq,
 {
+    // Inserts a new key-value pair into the R-tree, ignoring any existing
+    // entries with the same key.
     pub fn insert(&mut self, key: Key, value: Value) {
         let ops = self.ops();
         let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
         root.insert(key, value)
     }
 
+    /// Inserts a new key-value pair into the R-tree, or replaces the value of
+    /// an existing entry with the same key, returning the previous value. If
+    /// multiple entries with the same key exist, the value of the first entry
+    /// will be replaced.
     pub fn insert_unique(&mut self, key: Key, value: Value) -> Option<Value> {
         let ops = self.ops();
         let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
         root.insert_unique(key, value)
     }
 
+    /// Returns a reference to the value associated with the given key, or `None`
+    /// if no such value exists. If multiple entries with the same key exist, a
+    /// reference to the the value of the first entry is returned.
     pub fn get(&self, key: &Key) -> Option<&Value> {
         let ops = self.ops();
         let root = unsafe { ops.wrap_ref(&self.root, self.height) };
         root.get(key)
     }
 
+    /// Returns a mutable reference to the value associated with the given key,
+    /// or `None` if no such value exists. If multiple entries with the same key
+    /// exist, a reference to the the value of the first entry is returned.
     pub fn get_mut(&mut self, key: &Key) -> Option<&mut Value> {
         let ops = self.ops();
         let root = unsafe { ops.wrap_ref_mut(&mut self.root, self.height) };
         root.get_mut(key)
     }
 
+    /// Removes the entry with the given key, returning the value of the entry
+    /// if it existed. If multiple entries with the same key exist, the first
+    /// entry is removed.
     pub fn remove(&mut self, key: &Key) -> Option<Value> {
         let ops = self.ops();
         let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
         root.remove(key)
     }
 
+    /// Returns the number of entries in the R-tree.
     pub fn len(&self) -> usize {
         let ops = self.ops();
         let root = unsafe { ops.wrap_ref(&self.root, self.height) };
