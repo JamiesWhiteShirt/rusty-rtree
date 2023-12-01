@@ -2,14 +2,14 @@ use std::{cmp::Ordering, ops::Sub};
 
 use noisy_float::types::N64;
 
-use crate::bounds::{min_bounds, Bounded, Bounds};
+use crate::bounds::{Bounded, Bounds};
 
 impl<N, const D: usize> Bounds<N, D>
 where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
 {
     fn volume_increase_of_min_bounds(&self, other: &Self) -> N64 {
-        min_bounds(self, other).volume() - self.volume()
+        Bounds::containing(self, other).volume() - self.volume()
     }
 }
 

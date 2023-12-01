@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    bounds::{empty_bounds, min_bounds, min_bounds_all, Bounded, Bounds},
+    bounds::{Bounded, Bounds},
     fc_vec::{FCVec, FCVecContainer, FCVecOps},
     intersects::Intersects,
     select, split,
@@ -119,14 +119,14 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     {
         let bounds = if level > 0 {
             let children = self.inner.wrap_ref(&node.children.inner);
-            min_bounds_all(
+            Bounds::containing_all(
                 children
                     .iter()
                     .map(|node| self.debug_assert_bvh(node, level - 1)),
             )
         } else {
             let children = self.leaf.wrap_ref(&node.children.leaf);
-            min_bounds_all(children.iter().map(|(key, _)| key.bounds()))
+            Bounds::containing_all(children.iter().map(|(key, _)| key.bounds()))
         };
         assert_eq!(node.bounds, bounds);
         bounds
@@ -189,7 +189,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         unsafe {
             self.wrap(
                 Node::new(
-                    empty_bounds(),
+                    Bounds::empty(),
                     NodeChildren {
                         leaf: ManuallyDrop::new(self.leaf.new().unwrap()),
                     },
@@ -210,7 +210,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         unsafe {
             self.wrap(
                 Node::new(
-                    empty_bounds(),
+                    Bounds::empty(),
                     NodeChildren {
                         inner: ManuallyDrop::new(self.inner.new().unwrap()),
                     },
@@ -265,7 +265,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                         level,
                     ))
                 } else {
-                    node.bounds = min_bounds(&node.bounds, &entry_bounds);
+                    node.bounds = Bounds::containing(&node.bounds, &entry_bounds);
                     None
                 }
             }
@@ -286,7 +286,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                         level,
                     ))
                 } else {
-                    node.bounds = min_bounds(&node.bounds, &entry_bounds);
+                    node.bounds = Bounds::containing(&node.bounds, &entry_bounds);
                     None
                 }
             }
@@ -314,10 +314,10 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             if let Some(new_child) = insert_child.insert(entry) {
                 // The child node split, so the entries in new_child are no longer part of self
                 // Recompute the bounds of self before trying to insert new_child into self
-                node.bounds = min_bounds_all(children.iter().map(|child| child.bounds()));
+                node.bounds = Bounds::containing_all(children.iter().map(|child| child.bounds()));
                 self.self_insert(node, level, NodeEntry::Inner(new_child))
             } else {
-                node.bounds = min_bounds(&node.bounds, &entry_bounds);
+                node.bounds = Bounds::containing(&node.bounds, &entry_bounds);
                 None
             }
         } else {
@@ -350,8 +350,9 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                             underfull_nodes[level - 1] = Some(removed_child);
                         }
 
-                        node.bounds =
-                            min_bounds_all(node.children.inner.iter().map(|child| child.bounds()));
+                        node.bounds = Bounds::containing_all(
+                            node.children.inner.iter().map(|child| child.bounds()),
+                        );
 
                         return Some(value);
                     }
@@ -364,7 +365,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             if let Some(i) = index {
                 let value = children.swap_remove(i).1;
                 node.bounds =
-                    min_bounds_all(node.children.leaf.iter().map(|(key, _)| key.bounds()));
+                    Bounds::containing_all(node.children.leaf.iter().map(|(key, _)| key.bounds()));
 
                 return Some(value);
             }
@@ -538,10 +539,10 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
                             // The child node split, so the entries in new_child are no longer part of self
                             // Recompute the bounds of self before trying to insert new_child into self
                             node.bounds =
-                                min_bounds_all(children.iter().map(|child| child.bounds()));
+                                Bounds::containing_all(children.iter().map(|child| child.bounds()));
                             self.self_insert(node, level, NodeEntry::Inner(new_child))
                         } else {
-                            node.bounds = min_bounds(&node.bounds, &entry_bounds);
+                            node.bounds = Bounds::containing(&node.bounds, &entry_bounds);
                             None
                         },
                     )
@@ -585,7 +586,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
     ) where
         N: Ord + Clone + num_traits::Bounded,
     {
-        let bounds = min_bounds(&root.bounds, &sibling.node.bounds);
+        let bounds = Bounds::containing(&root.bounds, &sibling.node.bounds);
         let mut next_root_children = self.inner.new();
         next_root_children.push(ptr::read(root));
         next_root_children.push(sibling.unwrap());

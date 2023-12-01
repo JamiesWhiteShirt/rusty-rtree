@@ -18,49 +18,52 @@ pub struct Bounds<N, const D: usize> {
     pub max: Vector<N, D>,
 }
 
-impl<N, const D: usize> Eq for Bounds<N, D> where N: Eq {}
-
-pub fn empty_bounds<N: num_traits::Bounded, const D: usize>() -> Bounds<N, D> {
-    let min = Vector(array::from_fn(|_| N::max_value()));
-    let max = Vector(array::from_fn(|_| N::min_value()));
-    Bounds { min, max }
-}
-
-pub fn min_bounds<N, const D: usize>(lhs: &Bounds<N, D>, rhs: &Bounds<N, D>) -> Bounds<N, D>
-where
-    N: Ord + Clone,
-{
-    let min = Vector(
-        from_iter(
-            lhs.min
-                .zip(&rhs.min)
-                .map(|(lhs, rhs)| cmp::min(lhs, rhs).clone()),
-        )
-        .unwrap(),
-    );
-    let max = Vector(
-        from_iter(
-            lhs.max
-                .zip(&rhs.max)
-                .map(|(lhs, rhs)| cmp::max(lhs, rhs).clone()),
-        )
-        .unwrap(),
-    );
-    Bounds { min, max }
-}
-
-pub fn min_bounds_all<N, const D: usize>(
-    bounds: impl IntoIterator<Item = Bounds<N, D>>,
-) -> Bounds<N, D>
-where
-    N: Ord + num_traits::Bounded + Clone,
-{
-    let mut res = empty_bounds();
-    for bounds in bounds {
-        res = min_bounds(&res, &bounds)
+impl<N, const D: usize> Bounds<N, D> {
+    pub fn empty() -> Bounds<N, D>
+    where
+        N: num_traits::Bounded,
+    {
+        let min = Vector(array::from_fn(|_| N::max_value()));
+        let max = Vector(array::from_fn(|_| N::min_value()));
+        Bounds { min, max }
     }
-    res
+
+    pub fn containing(lhs: &Bounds<N, D>, rhs: &Bounds<N, D>) -> Bounds<N, D>
+    where
+        N: Ord + Clone,
+    {
+        let min = Vector(
+            from_iter(
+                lhs.min
+                    .zip(&rhs.min)
+                    .map(|(lhs, rhs)| cmp::min(lhs, rhs).clone()),
+            )
+            .unwrap(),
+        );
+        let max = Vector(
+            from_iter(
+                lhs.max
+                    .zip(&rhs.max)
+                    .map(|(lhs, rhs)| cmp::max(lhs, rhs).clone()),
+            )
+            .unwrap(),
+        );
+        Bounds { min, max }
+    }
+
+    pub fn containing_all(bounds: impl IntoIterator<Item = Bounds<N, D>>) -> Bounds<N, D>
+    where
+        N: Ord + num_traits::Bounded + Clone,
+    {
+        let mut res = Bounds::empty();
+        for bounds in bounds {
+            res = Self::containing(&res, &bounds);
+        }
+        res
+    }
 }
+
+impl<N, const D: usize> Eq for Bounds<N, D> where N: Eq {}
 
 impl<N, const D: usize> Bounded<N, D> for Bounds<N, D>
 where
