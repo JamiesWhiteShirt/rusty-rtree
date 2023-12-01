@@ -127,9 +127,10 @@ where
 {
     fn clone(&self) -> Self {
         let ops = self.ops();
+        let root = unsafe { ops.wrap_ref(&self.root, self.height) }.clone();
         RTree {
             height: self.height,
-            root: unsafe { ops.clone(&self.root, self.height) },
+            root: unsafe { root.unwrap() },
             config: self.config,
         }
     }

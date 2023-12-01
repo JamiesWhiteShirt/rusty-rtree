@@ -389,11 +389,11 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn clone(
-        &self,
+    unsafe fn clone<'a>(
+        &'a self,
         node: &Node<N, D, Key, Value>,
         level: usize,
-    ) -> Node<N, D, Key, Value>
+    ) -> NodeContainer<'a, N, D, Key, Value>
     where
         N: Clone,
         Key: Clone,
@@ -403,22 +403,28 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             let children = self.inner.wrap_ref(&node.children.inner);
             let mut clone_children = self.inner.new();
             for child in children {
-                clone_children.push(self.clone(child, level - 1));
+                clone_children.push(self.clone(child, level - 1).unwrap());
             }
-            Node::new(
-                node.bounds.clone(),
-                NodeChildren {
-                    inner: ManuallyDrop::new(clone_children.unwrap()),
-                },
+            self.wrap(
+                Node::new(
+                    node.bounds.clone(),
+                    NodeChildren {
+                        inner: ManuallyDrop::new(clone_children.unwrap()),
+                    },
+                    level,
+                ),
                 level,
             )
         } else {
             let children = self.leaf.wrap_ref(&node.children.leaf);
-            Node::new(
-                node.bounds.clone(),
-                NodeChildren {
-                    leaf: ManuallyDrop::new(children.clone().unwrap()),
-                },
+            self.wrap(
+                Node::new(
+                    node.bounds.clone(),
+                    NodeChildren {
+                        leaf: ManuallyDrop::new(children.clone().unwrap()),
+                    },
+                    level,
+                ),
                 level,
             )
         }
@@ -939,11 +945,7 @@ where
     Value: Clone,
 {
     fn clone(&self) -> Self {
-        Self {
-            ops: self.ops,
-            level: self.level,
-            node: unsafe { self.ops.clone(&self.node, self.level) },
-        }
+        unsafe { self.ops.clone(&self.node, self.level) }
     }
 }
 
@@ -987,6 +989,15 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRef<'a, 'b, N, D, Key, Value> {
         Key: Eq + Bounded<N, D>,
     {
         unsafe { self.ops.get(self.node, self.level, key) }
+    }
+
+    pub(crate) fn clone(&self) -> NodeContainer<'a, N, D, Key, Value>
+    where
+        N: Clone,
+        Key: Clone,
+        Value: Clone,
+    {
+        unsafe { self.ops.clone(self.node, self.level) }
     }
 }
 
