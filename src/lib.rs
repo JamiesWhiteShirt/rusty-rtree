@@ -144,6 +144,13 @@ where
         unsafe { FilterIter::new(self.height, &self.root, filter) }
     }
 
+    pub fn filter_iter_mut<'a, Filter: SpatialFilter<N, D, Key>>(
+        &'a mut self,
+        filter: Filter,
+    ) -> iter::FilterIterMut<'a, N, D, Key, Value, Filter> {
+        unsafe { iter::FilterIterMut::new(self.height, &mut self.root, filter) }
+    }
+
     // Inserts a new key-value pair into the R-tree, ignoring any existing
     // entries with the same key.
     pub fn insert(&mut self, key: Key, value: Value) {
