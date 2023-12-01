@@ -112,11 +112,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn debug_assert_bvh(
-        &self,
-        node: &Node<N, D, Key, Value>,
-        level: usize,
-    ) -> Bounds<N, D>
+    unsafe fn debug_assert_bvh(&self, node: &Node<N, D, Key, Value>, level: usize) -> Bounds<N, D>
     where
         Key: Bounded<N, D>,
         N: Ord + num_traits::Bounded + Clone + Eq + Debug,
@@ -136,7 +132,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         bounds
     }
 
-    pub(crate) unsafe fn debug_assert_eq(
+    unsafe fn debug_assert_eq(
         &self,
         a: &Node<N, D, Key, Value>,
         b: &Node<N, D, Key, Value>,
@@ -161,7 +157,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn debug_assert_min_children(
+    unsafe fn debug_assert_min_children(
         &self,
         node: &Node<N, D, Key, Value>,
         level: usize,
@@ -777,7 +773,7 @@ pub(crate) struct NodeRefMut<'a, 'b, N, const D: usize, Key, Value> {
 }
 
 impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value> {
-    pub(crate) unsafe fn insert(
+    unsafe fn insert(
         &mut self,
         entry: NodeEntry<'a, N, D, Key, Value>,
     ) -> Option<NodeContainer<'a, N, D, Key, Value>>
@@ -875,36 +871,6 @@ pub(crate) struct NodeContainer<'a, N, const D: usize, Key, Value> {
 }
 
 impl<'a, N, const D: usize, Key, Value> NodeContainer<'a, N, D, Key, Value> {
-    fn insert(
-        &mut self,
-        entry: NodeEntry<'a, N, D, Key, Value>,
-    ) -> Option<NodeContainer<'a, N, D, Key, Value>>
-    where
-        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-        Key: Bounded<N, D>,
-    {
-        unsafe {
-            self.ops
-                .insert(&mut self.node, self.level, self.level, entry)
-        }
-    }
-
-    fn remove(
-        &mut self,
-        key: &Key,
-        underfully_nodes: &mut [Option<Node<N, D, Key, Value>>],
-    ) -> Option<Value>
-    where
-        N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-        Key: Bounded<N, D> + Eq,
-        Value: Eq,
-    {
-        unsafe {
-            self.ops
-                .remove(&mut self.node, self.level, key, underfully_nodes)
-        }
-    }
-
     pub(crate) unsafe fn take_leaf_children(self) -> FCVecContainer<'a, (Key, Value)> {
         if self.level > 0 {
             panic!("Cannot take leaf children from an inner node");
@@ -998,6 +964,30 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRef<'a, 'b, N, D, Key, Value> {
         Value: Clone,
     {
         unsafe { self.ops.clone(self.node, self.level) }
+    }
+
+    pub(crate) fn debug_assert_bvh(&self) -> Bounds<N, D>
+    where
+        Key: Bounded<N, D>,
+        N: Ord + num_traits::Bounded + Clone + Eq + Debug,
+    {
+        unsafe { self.ops.debug_assert_bvh(self.node, self.level) }
+    }
+
+    pub(crate) fn debug_assert_eq(&self, other: NodeRef<N, D, Key, Value>)
+    where
+        N: Debug + Eq,
+        Key: Debug + Eq,
+        Value: Debug + Eq,
+    {
+        unsafe { self.ops.debug_assert_eq(self.node, other.node, self.level) }
+    }
+
+    pub(crate) fn debug_assert_min_children(&self, is_root: bool) {
+        unsafe {
+            self.ops
+                .debug_assert_min_children(self.node, self.level, is_root)
+        }
     }
 }
 

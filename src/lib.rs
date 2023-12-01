@@ -182,9 +182,8 @@ where
         N: Debug,
     {
         let ops = self.ops();
-        unsafe {
-            ops.debug_assert_bvh(&self.root, self.height);
-        }
+        let root = unsafe { ops.wrap_ref(&self.root, self.height) };
+        root.debug_assert_bvh();
     }
 
     fn debug_assert_eq(a: &Self, b: &Self)
@@ -195,8 +194,11 @@ where
     {
         assert_eq!(a.config, b.config);
         assert_eq!(a.height, b.height);
-        let ops = a.ops();
-        unsafe { ops.debug_assert_eq(&a.root, &b.root, a.height) }
+        let a_ops = a.ops();
+        let b_ops = b.ops();
+        let a_root = unsafe { a_ops.wrap_ref(&a.root, a.height) };
+        let b_root = unsafe { b_ops.wrap_ref(&b.root, b.height) };
+        a_root.debug_assert_eq(b_root);
     }
 
     fn debug_assert_min_children(&self)
@@ -204,7 +206,8 @@ where
         N: Debug,
     {
         let ops = self.ops();
-        unsafe { ops.debug_assert_min_children(&self.root, self.height, true) }
+        let root = unsafe { ops.wrap_ref(&self.root, self.height) };
+        root.debug_assert_min_children(true);
     }
 }
 
