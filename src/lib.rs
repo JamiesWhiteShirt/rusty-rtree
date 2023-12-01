@@ -227,6 +227,19 @@ where
     }
 }
 
+impl<'a, N, const D: usize, Key, Value> IntoIterator for &'a RTree<N, D, Key, Value>
+where
+    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
+    Key: Bounded<N, D> + Eq,
+{
+    type Item = &'a (Key, Value);
+    type IntoIter = iter::Iter<'a, N, D, Key, Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use core::fmt;
