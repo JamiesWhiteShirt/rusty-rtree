@@ -56,7 +56,7 @@ impl<'a, N, const D: usize, Key, Value> Drop for Iter<'a, N, D, Key, Value> {
 }
 
 impl<'a, N, const D: usize, Key, Value> Iterator for Iter<'a, N, D, Key, Value> {
-    type Item = &'a (Key, Value);
+    type Item = (&'a Key, &'a Value);
 
     fn next(&mut self) -> Option<Self::Item> {
         while !self.stack.is_empty() {
@@ -64,7 +64,7 @@ impl<'a, N, const D: usize, Key, Value> Iterator for Iter<'a, N, D, Key, Value> 
             if level == 0 {
                 // Iterating over leaf node
                 if let Some(entry) = (*unsafe { &mut self.stack.last_mut().unwrap().leaf }).next() {
-                    return Some(entry);
+                    return Some((&entry.0, &entry.1));
                 } else {
                     unsafe { ManuallyDrop::drop(&mut self.stack.pop().unwrap().leaf) };
                 }
@@ -255,7 +255,7 @@ where
     Key: Bounded<N, D>,
     Filter: SpatialFilter<N, D, Key>,
 {
-    type Item = &'a (Key, Value);
+    type Item = (&'a Key, &'a Value);
 
     fn next(&mut self) -> Option<Self::Item> {
         while !self.stack.is_empty() {
@@ -265,7 +265,7 @@ where
                 if let Some(entry) = (*unsafe { &mut self.stack.last_mut().unwrap().leaf })
                     .find(|(key, _)| self.filter.test_key(key))
                 {
-                    return Some(entry);
+                    return Some((&entry.0, &entry.1));
                 } else {
                     unsafe { ManuallyDrop::drop(&mut self.stack.pop().unwrap().leaf) };
                 }

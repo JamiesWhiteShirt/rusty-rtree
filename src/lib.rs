@@ -242,7 +242,7 @@ where
     N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
     Key: Bounded<N, D> + Eq,
 {
-    type Item = &'a (Key, Value);
+    type Item = (&'a Key, &'a Value);
     type IntoIter = iter::Iter<'a, N, D, Key, Value>;
 
     fn into_iter(self) -> Self::IntoIter {
