@@ -98,13 +98,13 @@ where
     }
 }
 
-pub(crate) struct NodeOps<N, const D: usize, Key, Value> {
-    leaf: FCVecOps<(Key, Value)>,
-    inner: FCVecOps<Node<N, D, Key, Value>>,
+pub(crate) struct NodeOps {
+    leaf: FCVecOps,
+    inner: FCVecOps,
     min_children: usize,
 }
 
-impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
+impl NodeOps {
     pub(crate) fn new_ops(min_children: usize, max_children: usize) -> Self {
         NodeOps {
             leaf: FCVecOps::new_ops(max_children),
@@ -113,7 +113,11 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn debug_assert_bvh(&self, node: &Node<N, D, Key, Value>, level: usize) -> Bounds<N, D>
+    unsafe fn debug_assert_bvh<N, const D: usize, Key, Value>(
+        &self,
+        node: &Node<N, D, Key, Value>,
+        level: usize,
+    ) -> Bounds<N, D>
     where
         Key: Bounded<N, D>,
         N: Ord + num_traits::Bounded + Clone + Eq + Debug,
@@ -133,7 +137,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         bounds
     }
 
-    unsafe fn debug_assert_eq(
+    unsafe fn debug_assert_eq<N, const D: usize, Key, Value>(
         &self,
         a: &Node<N, D, Key, Value>,
         b: &Node<N, D, Key, Value>,
@@ -158,7 +162,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn debug_assert_min_children(
+    unsafe fn debug_assert_min_children<N, const D: usize, Key, Value>(
         &self,
         node: &Node<N, D, Key, Value>,
         level: usize,
@@ -183,7 +187,9 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) fn empty_leaf<'a>(&'a self) -> NodeContainer<'a, N, D, Key, Value>
+    pub(crate) fn empty_leaf<'a, N, const D: usize, Key, Value>(
+        &'a self,
+    ) -> NodeContainer<'a, N, D, Key, Value>
     where
         N: num_traits::Bounded,
     {
@@ -201,7 +207,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn empty_inner<'a>(
+    pub(crate) unsafe fn empty_inner<'a, N, const D: usize, Key, Value>(
         &'a self,
         level: NonZeroUsize,
     ) -> NodeContainer<'a, N, D, Key, Value>
@@ -222,14 +228,14 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn take_leaf_children(
+    unsafe fn take_leaf_children<N, const D: usize, Key, Value>(
         &self,
         node: Node<N, D, Key, Value>,
     ) -> FCVecContainer<(Key, Value)> {
         self.leaf.wrap(ManuallyDrop::into_inner(node.children.leaf))
     }
 
-    unsafe fn take_inner_children(
+    unsafe fn take_inner_children<N, const D: usize, Key, Value>(
         &self,
         node: Node<N, D, Key, Value>,
     ) -> FCVecContainer<Node<N, D, Key, Value>> {
@@ -237,7 +243,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             .wrap(ManuallyDrop::into_inner(node.children.inner))
     }
 
-    unsafe fn self_insert<'a, 'b>(
+    unsafe fn self_insert<'a, 'b, N, const D: usize, Key, Value>(
         &'a self,
         node: &'b mut Node<N, D, Key, Value>,
         level: usize,
@@ -294,7 +300,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn insert<'a, 'b>(
+    unsafe fn insert<'a, 'b, N, const D: usize, Key, Value>(
         &'a self,
         node: &'b mut Node<N, D, Key, Value>,
         level: usize,
@@ -326,7 +332,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn remove<Q>(
+    unsafe fn remove<N, const D: usize, Key, Value, Q>(
         &self,
         node: &mut Node<N, D, Key, Value>,
         level: usize,
@@ -376,7 +382,11 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn drop(&self, node: &mut Node<N, D, Key, Value>, level: usize) {
+    pub(crate) unsafe fn drop<N, const D: usize, Key, Value>(
+        &self,
+        node: &mut Node<N, D, Key, Value>,
+        level: usize,
+    ) {
         if level > 0 {
             let children = ManuallyDrop::take(&mut node.children.inner);
             let mut children = self.inner.wrap(children);
@@ -389,7 +399,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn clone<'a>(
+    unsafe fn clone<'a, N, const D: usize, Key, Value>(
         &'a self,
         node: &Node<N, D, Key, Value>,
         level: usize,
@@ -430,7 +440,11 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn len(&self, node: &Node<N, D, Key, Value>, level: usize) -> usize {
+    unsafe fn len<N, const D: usize, Key, Value>(
+        &self,
+        node: &Node<N, D, Key, Value>,
+        level: usize,
+    ) -> usize {
         if level > 0 {
             let children = self.inner.wrap_ref(&node.children.inner);
             let mut size = 0;
@@ -444,7 +458,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn get<'a, Q>(
+    unsafe fn get<'a, N, const D: usize, Key, Value, Q>(
         &self,
         node: &'a Node<N, D, Key, Value>,
         level: usize,
@@ -474,7 +488,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn get_mut<'a, Q>(
+    unsafe fn get_mut<'a, N, const D: usize, Key, Value, Q>(
         &self,
         node: &'a mut Node<N, D, Key, Value>,
         level: usize,
@@ -504,7 +518,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn insert_unique<'a, 'b>(
+    unsafe fn insert_unique<'a, 'b, N, const D: usize, Key, Value>(
         &'a self,
         node: &'b mut Node<N, D, Key, Value>,
         level: usize,
@@ -583,7 +597,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
 
     /// Branches the root node into two nodes in-place, such that the previous
     /// root node and the sibling node become children of the new root node.
-    unsafe fn root_branch<'a>(
+    unsafe fn root_branch<'a, N, const D: usize, Key, Value>(
         &'a self,
         root: &mut Node<N, D, Key, Value>,
         height: &mut usize,
@@ -608,7 +622,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         *height += 1;
     }
 
-    unsafe fn root_insert_entry(
+    unsafe fn root_insert_entry<N, const D: usize, Key, Value>(
         &self,
         root: &mut Node<N, D, Key, Value>,
         height: &mut usize,
@@ -623,7 +637,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn root_insert(
+    unsafe fn root_insert<N, const D: usize, Key, Value>(
         &self,
         root: &mut Node<N, D, Key, Value>,
         height: &mut usize,
@@ -636,7 +650,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         self.root_insert_entry(root, height, 0, NodeEntry::Leaf((key, value)));
     }
 
-    unsafe fn root_insert_unique(
+    unsafe fn root_insert_unique<N, const D: usize, Key, Value>(
         &self,
         root: &mut Node<N, D, Key, Value>,
         height: &mut usize,
@@ -656,8 +670,11 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
 
     /// Tries to unbranch the root node in-place, such that the root node becomes
     /// the only child of the previous root node.
-    unsafe fn root_try_unbranch(&self, root: &mut Node<N, D, Key, Value>, level: &mut usize)
-    where
+    unsafe fn root_try_unbranch<N, const D: usize, Key, Value>(
+        &self,
+        root: &mut Node<N, D, Key, Value>,
+        level: &mut usize,
+    ) where
         N: num_traits::Bounded,
     {
         if *level > 0 {
@@ -673,7 +690,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn root_remove<Q>(
+    unsafe fn root_remove<N, const D: usize, Key, Value, Q>(
         &self,
         root: &mut Node<N, D, Key, Value>,
         height: &mut usize,
@@ -724,7 +741,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         return None;
     }
 
-    pub(crate) unsafe fn wrap(
+    pub(crate) unsafe fn wrap<N, const D: usize, Key, Value>(
         &self,
         node: Node<N, D, Key, Value>,
         level: usize,
@@ -736,7 +753,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn wrap_ref<'a, 'b>(
+    pub(crate) unsafe fn wrap_ref<'a, 'b, N, const D: usize, Key, Value>(
         &'a self,
         node: &'b Node<N, D, Key, Value>,
         level: usize,
@@ -748,7 +765,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn wrap_ref_mut<'a, 'b>(
+    pub(crate) unsafe fn wrap_ref_mut<'a, 'b, N, const D: usize, Key, Value>(
         &'a self,
         node: &'b mut Node<N, D, Key, Value>,
         level: usize,
@@ -760,7 +777,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    pub(crate) unsafe fn wrap_root_ref_mut<'a, 'b>(
+    pub(crate) unsafe fn wrap_root_ref_mut<'a, 'b, N, const D: usize, Key, Value>(
         &'a self,
         node: &'b mut Node<N, D, Key, Value>,
         height: &'b mut usize,
@@ -774,7 +791,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
 }
 
 pub(crate) struct NodeRefMut<'a, 'b, N, const D: usize, Key, Value> {
-    ops: &'a NodeOps<N, D, Key, Value>,
+    ops: &'a NodeOps,
     level: usize,
     node: &'b mut Node<N, D, Key, Value>,
 }
@@ -846,7 +863,7 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
 }
 
 pub(crate) struct RootNodeRefMut<'a, 'b, N, const D: usize, Key, Value> {
-    ops: &'a NodeOps<N, D, Key, Value>,
+    ops: &'a NodeOps,
     height: &'b mut usize,
     node: &'b mut Node<N, D, Key, Value>,
 }
@@ -882,7 +899,7 @@ impl<'a, 'b, N, const D: usize, Key, Value> RootNodeRefMut<'a, 'b, N, D, Key, Va
 }
 
 pub(crate) struct NodeContainer<'a, N, const D: usize, Key, Value> {
-    ops: &'a NodeOps<N, D, Key, Value>,
+    ops: &'a NodeOps,
     level: usize,
     node: Node<N, D, Key, Value>,
 }
@@ -954,7 +971,7 @@ where
 }
 
 pub(crate) struct NodeRef<'a, 'b, N, const D: usize, Key, Value> {
-    ops: &'a NodeOps<N, D, Key, Value>,
+    ops: &'a NodeOps,
     level: usize,
     node: &'b Node<N, D, Key, Value>,
 }
@@ -1029,7 +1046,7 @@ where
 }
 
 pub(crate) struct NodeChildrenRef<'a, 'b, N, const D: usize, Key, Value> {
-    ops: &'a NodeOps<N, D, Key, Value>,
+    ops: &'a NodeOps,
     level: usize,
     children: &'b NodeChildren<N, D, Key, Value>,
 }

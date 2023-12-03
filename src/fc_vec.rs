@@ -1,7 +1,6 @@
 use std::{
     alloc,
     fmt::{self, Debug},
-    marker::PhantomData,
     mem::{self, ManuallyDrop},
     ops::{Deref, DerefMut, Index, IndexMut},
     ptr::{self, NonNull},
@@ -133,20 +132,15 @@ impl<'a, T> IntoIterator for &'a mut FCVec<T> {
 /// # Safety
 ///
 /// Operations are only safe on a given [FCVec<T>] if it was created by this
-/// [FCVecOps<T>] with [FCVecOps<T>::new].
-pub(crate) struct FCVecOps<T> {
+/// [FCVecOps] with [FCVecOps::new].
+pub(crate) struct FCVecOps {
     cap: usize,
-
-    _phantom: PhantomData<T>,
 }
 
-impl<T> FCVecOps<T> {
-    /// Creates a new [FCVecOps<T>] with the specified capacity and type of items.
+impl FCVecOps {
+    /// Creates a new [FCVecOps] with the specified capacity and type of items.
     pub(crate) fn new_ops(cap: usize) -> Self {
-        FCVecOps {
-            cap,
-            _phantom: PhantomData,
-        }
+        FCVecOps { cap }
     }
 
     pub(crate) fn cap(&self) -> usize {
@@ -162,7 +156,7 @@ impl<T> FCVecOps<T> {
     /// The returned FCVec can only be used with the same FCVecOps that created
     /// it, and its contents must be dropped with [FCVecOps<T>::drop] before the
     /// FCVec is disposed of.
-    pub(crate) fn new<'a>(&'a self) -> FCVecContainer<'a, T> {
+    pub(crate) fn new<'a, T>(&'a self) -> FCVecContainer<'a, T> {
         let layout = alloc::Layout::array::<T>(self.cap).unwrap();
         let buf = match NonNull::new(unsafe { alloc::alloc(layout) } as *mut T) {
             Some(ptr) => ptr,
@@ -181,7 +175,7 @@ impl<T> FCVecOps<T> {
     ///
     /// The given FCVec must have been created by this FCVecOps, and must not
     /// be already dropped.
-    unsafe fn drop(&self, data: &mut FCVec<T>) {
+    unsafe fn drop<T>(&self, data: &mut FCVec<T>) {
         let layout = alloc::Layout::array::<T>(self.cap).unwrap();
         alloc::dealloc(data.buf.as_ptr() as *mut u8, layout);
     }
@@ -196,7 +190,7 @@ impl<T> FCVecOps<T> {
     ///
     /// The given FCVec must have been created by this FCVecOps and must not
     /// have been dropped.
-    unsafe fn push(&self, data: &mut FCVec<T>, value: T) {
+    unsafe fn push<T>(&self, data: &mut FCVec<T>, value: T) {
         if data.len == self.cap {
             panic!("Vector is full");
         }
@@ -213,7 +207,7 @@ impl<T> FCVecOps<T> {
     ///
     /// The given FCVec must have been created by this FCVecOps and must not
     /// have been dropped.
-    unsafe fn try_push(&self, data: &mut FCVec<T>, value: T) -> Option<T> {
+    unsafe fn try_push<T>(&self, data: &mut FCVec<T>, value: T) -> Option<T> {
         if data.len == self.cap {
             Some(value)
         } else {
@@ -236,7 +230,7 @@ impl<T> FCVecOps<T> {
     ///
     /// The given FCVec must have been created by this FCVecOps and must not
     /// have been dropped.
-    unsafe fn insert(&self, data: &mut FCVec<T>, index: usize, value: T) {
+    unsafe fn insert<T>(&self, data: &mut FCVec<T>, index: usize, value: T) {
         if index > data.len {
             panic!("Index out of bounds");
         }
@@ -261,7 +255,7 @@ impl<T> FCVecOps<T> {
     ///
     /// The given FCVec must have been created by this FCVecOps and must not
     /// have been dropped.
-    unsafe fn remove(&self, data: &mut FCVec<T>, index: usize) -> T {
+    unsafe fn remove<T>(&self, data: &mut FCVec<T>, index: usize) -> T {
         if index >= data.len {
             panic!("Index out of bounds");
         }
@@ -284,7 +278,7 @@ impl<T> FCVecOps<T> {
     ///
     /// The given FCVec must have been created by this FCVecOps and must not
     /// have been dropped.
-    unsafe fn swap_remove(&self, data: &mut FCVec<T>, index: usize) -> T {
+    unsafe fn swap_remove<T>(&self, data: &mut FCVec<T>, index: usize) -> T {
         if index >= data.len {
             panic!("Index out of bounds");
         }
@@ -306,7 +300,7 @@ impl<T> FCVecOps<T> {
     ///
     /// The given FCVec must have been created by this FCVecOps and must not
     /// have been dropped.
-    unsafe fn swap(&self, data: &mut FCVec<T>, index_1: usize, index_2: usize) {
+    unsafe fn swap<T>(&self, data: &mut FCVec<T>, index_1: usize, index_2: usize) {
         if index_1 >= data.len || index_2 >= data.len {
             panic!("Index out of bounds");
         }
@@ -321,7 +315,7 @@ impl<T> FCVecOps<T> {
     ///
     /// The given FCVec must have been created by this FCVecOps and must not
     /// have been dropped.
-    pub(crate) unsafe fn wrap<'a>(&'a self, vec: FCVec<T>) -> FCVecContainer<'a, T> {
+    pub(crate) unsafe fn wrap<'a, T>(&'a self, vec: FCVec<T>) -> FCVecContainer<'a, T> {
         FCVecContainer {
             data: vec,
             ops: self,
@@ -334,7 +328,7 @@ impl<T> FCVecOps<T> {
     ///
     /// The given FCVec must have been created by this FCVecOps and must not
     /// have been dropped.
-    pub(crate) unsafe fn wrap_ref<'a, 'b>(&'a self, vec: &'b FCVec<T>) -> FCVecRef<'a, 'b, T> {
+    pub(crate) unsafe fn wrap_ref<'a, 'b, T>(&'a self, vec: &'b FCVec<T>) -> FCVecRef<'a, 'b, T> {
         FCVecRef {
             ops: self,
             data: vec,
@@ -347,7 +341,7 @@ impl<T> FCVecOps<T> {
     ///
     /// The given FCVec must have been created by this FCVecOps and must not
     /// have been dropped.
-    pub(crate) unsafe fn wrap_ref_mut<'a, 'b>(
+    pub(crate) unsafe fn wrap_ref_mut<'a, 'b, T>(
         &'a self,
         vec: &'b mut FCVec<T>,
     ) -> FCVecRefMut<'a, 'b, T> {
@@ -368,7 +362,7 @@ impl<T> FCVecOps<T> {
     /// The returned FCVec can only be used with the same FCVecOps that created
     /// it, and its contents must be dropped with [FCVecOps<T>::drop] before the
     /// FCVec is disposed of.
-    unsafe fn clone(&self, vec: &FCVec<T>) -> FCVecContainer<T>
+    unsafe fn clone<T>(&self, vec: &FCVec<T>) -> FCVecContainer<T>
     where
         T: Clone,
     {
@@ -379,7 +373,7 @@ impl<T> FCVecOps<T> {
         new
     }
 
-    unsafe fn into_iter(&self, vec: FCVec<T>) -> IntoIter<T> {
+    unsafe fn into_iter<T>(&self, vec: FCVec<T>) -> IntoIter<T> {
         let start = vec.buf.as_ptr();
         let end = start.add(vec.len);
         IntoIter {
@@ -392,7 +386,7 @@ impl<T> FCVecOps<T> {
 }
 
 pub(crate) struct FCVecRef<'a, 'b, T> {
-    ops: &'a FCVecOps<T>,
+    ops: &'a FCVecOps,
     data: &'b FCVec<T>,
 }
 
@@ -454,7 +448,7 @@ impl<'a, 'b, T> IntoIterator for FCVecRef<'a, 'b, T> {
 }
 
 pub(crate) struct FCVecRefMut<'a, 'b, T> {
-    ops: &'a FCVecOps<T>,
+    ops: &'a FCVecOps,
     data: &'b mut FCVec<T>,
 }
 
@@ -463,7 +457,7 @@ impl<'a, 'b, T> FCVecRefMut<'a, 'b, T> {
         self.data.len()
     }
 
-    pub(crate) fn ops(&self) -> &'a FCVecOps<T> {
+    pub(crate) fn ops(&self) -> &'a FCVecOps {
         self.ops
     }
 
@@ -568,7 +562,7 @@ impl<'a, 'b, T> IntoIterator for FCVecRefMut<'a, 'b, T> {
 
 pub(crate) struct FCVecContainer<'a, T> {
     data: FCVec<T>,
-    ops: &'a FCVecOps<T>,
+    ops: &'a FCVecOps,
 }
 
 impl<'a, T> Debug for FCVecContainer<'a, T>

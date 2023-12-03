@@ -60,8 +60,8 @@ where
     N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
     Key: Bounded<N, D> + Eq,
 {
-    fn ops(&self) -> NodeOps<N, D, Key, Value> {
-        NodeOps::<N, D, Key, Value>::new_ops(self.config.min_children, self.config.max_children)
+    fn ops(&self) -> NodeOps {
+        NodeOps::new_ops(self.config.min_children, self.config.max_children)
     }
 }
 
@@ -117,7 +117,7 @@ where
 {
     /// Returns a new empty R-tree.
     pub fn new(config: RTreeConfig) -> RTree<N, D, Key, Value> {
-        let ops = NodeOps::<N, D, Key, Value>::new_ops(config.min_children, config.max_children);
+        let ops = NodeOps::new_ops(config.min_children, config.max_children);
         return RTree {
             height: 0,
             root: unsafe { ops.empty_leaf().unwrap() },
