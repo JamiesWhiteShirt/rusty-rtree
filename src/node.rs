@@ -351,13 +351,14 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             let mut i = children.len();
             while i > 0 {
                 i -= 1;
-                if children[i].bounds.intersects(&key.bounds()) {
-                    if let Some(value) =
-                        self.remove(&mut children[i], level - 1, key, underfull_nodes)
-                    {
-                        if children[i].children.len(level - 1) < self.min_children {
-                            let removed_child = children.swap_remove(i);
-                            underfull_nodes[level - 1] = Some(removed_child);
+                let mut child = self.wrap_ref_mut(&mut children[i], level - 1);
+                if child.bounds().intersects(&key.bounds()) {
+                    let value = child.remove(key, underfull_nodes);
+                    if let Some(value) = value {
+                        if child.shallow_len() < self.min_children {
+                            drop(child);
+                            let child = children.swap_remove(i);
+                            underfull_nodes[level - 1] = Some(child);
                         }
 
                         node.bounds = Bounds::containing_all(
@@ -801,15 +802,15 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
         }
     }
 
-    fn remove(
+    fn remove<Q>(
         &mut self,
-        key: &Key,
+        key: &Q,
         underfull_nodes: &mut [Option<Node<N, D, Key, Value>>],
     ) -> Option<Value>
     where
         N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-        Key: Bounded<N, D> + Eq,
-        Value: Eq,
+        Key: Bounded<N, D> + Eq + Borrow<Q>,
+        Q: Bounded<N, D> + Eq + ?Sized,
     {
         unsafe {
             self.ops
@@ -841,6 +842,14 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
                     .insert_unique(&mut self.node, self.level, key, value);
             (prev_value, new_sibling)
         }
+    }
+
+    fn bounds(&self) -> &Bounds<N, D> {
+        &self.node.bounds
+    }
+
+    fn shallow_len(&self) -> usize {
+        self.node.children.len(self.level)
     }
 }
 
