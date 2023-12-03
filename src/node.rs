@@ -1,4 +1,5 @@
 use std::{
+    borrow::Borrow,
     fmt::Debug,
     marker::PhantomData,
     mem::{self, ManuallyDrop},
@@ -333,16 +334,17 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn remove(
+    unsafe fn remove<Q>(
         &self,
         node: &mut Node<N, D, Key, Value>,
         level: usize,
-        key: &Key,
+        key: &Q,
         underfull_nodes: &mut [Option<Node<N, D, Key, Value>>],
     ) -> Option<Value>
     where
         N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-        Key: Bounded<N, D> + Eq,
+        Key: Bounded<N, D> + Eq + Borrow<Q>,
+        Q: Bounded<N, D> + Eq + ?Sized,
     {
         if level > 0 {
             let mut children = self.inner.wrap_ref_mut(&mut node.children.inner);
@@ -369,7 +371,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             return None;
         } else {
             let mut children = self.leaf.wrap_ref_mut(&mut node.children.leaf);
-            let index = children.iter().position(|(k, _)| k == key);
+            let index = children.iter().position(|(k, _)| k.borrow() == key);
             if let Some(i) = index {
                 let value = children.swap_remove(i).1;
                 node.bounds =
@@ -449,15 +451,16 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn get<'a>(
+    unsafe fn get<'a, Q>(
         &self,
         node: &'a Node<N, D, Key, Value>,
         level: usize,
-        key: &Key,
+        key: &Q,
     ) -> Option<&'a Value>
     where
         N: Ord,
-        Key: Eq + Bounded<N, D>,
+        Key: Borrow<Q>,
+        Q: Bounded<N, D> + Eq + ?Sized,
     {
         if level > 0 {
             let children = self.inner.wrap_ref(&node.children.inner);
@@ -473,20 +476,21 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             node.children
                 .leaf
                 .iter()
-                .find(|(k, _)| k == key)
+                .find(|(k, _)| k.borrow() == key)
                 .map(|(_, v)| v)
         }
     }
 
-    unsafe fn get_mut<'a>(
+    unsafe fn get_mut<'a, Q>(
         &self,
         node: &'a mut Node<N, D, Key, Value>,
         level: usize,
-        key: &Key,
+        key: &Q,
     ) -> Option<&'a mut Value>
     where
         N: Ord,
-        Key: Eq + Bounded<N, D>,
+        Key: Borrow<Q>,
+        Q: Eq + Bounded<N, D> + ?Sized,
     {
         if level > 0 {
             let children = self.inner.wrap_ref_mut(&mut node.children.inner);
@@ -502,7 +506,7 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
             let children = self.leaf.wrap_ref_mut(&mut node.children.leaf);
             children
                 .iter_mut_take()
-                .find(|(k, _)| k == key)
+                .find(|(k, _)| k.borrow() == key)
                 .map(|(_, v)| v)
         }
     }
@@ -676,15 +680,16 @@ impl<N, const D: usize, Key, Value> NodeOps<N, D, Key, Value> {
         }
     }
 
-    unsafe fn root_remove(
+    unsafe fn root_remove<Q>(
         &self,
         root: &mut Node<N, D, Key, Value>,
         height: &mut usize,
-        key: &Key,
+        key: &Q,
     ) -> Option<Value>
     where
         N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-        Key: Bounded<N, D> + Eq,
+        Key: Borrow<Q> + Bounded<N, D> + Eq,
+        Q: Bounded<N, D> + Eq + ?Sized,
     {
         let original_height = *height;
         let mut underfull_nodes: Box<[Option<Node<N, D, Key, Value>>]> =
@@ -812,10 +817,11 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRefMut<'a, 'b, N, D, Key, Value>
         }
     }
 
-    pub(crate) fn get_mut(self, key: &Key) -> Option<&'b mut Value>
+    pub(crate) fn get_mut<Q>(self, key: &Q) -> Option<&'b mut Value>
     where
         N: Ord,
-        Key: Eq + Bounded<N, D>,
+        Key: Borrow<Q>,
+        Q: Eq + Bounded<N, D> + ?Sized,
     {
         unsafe { self.ops.get_mut(self.node, self.level, key) }
     }
@@ -864,10 +870,11 @@ impl<'a, 'b, N, const D: usize, Key, Value> RootNodeRefMut<'a, 'b, N, D, Key, Va
         }
     }
 
-    pub(crate) fn remove(&mut self, key: &Key) -> Option<Value>
+    pub(crate) fn remove<Q>(&mut self, key: &Q) -> Option<Value>
     where
         N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-        Key: Bounded<N, D> + Eq,
+        Key: Bounded<N, D> + Eq + Borrow<Q>,
+        Q: Bounded<N, D> + Eq + ?Sized,
     {
         unsafe { self.ops.root_remove(self.node, self.height, key) }
     }
@@ -958,10 +965,11 @@ impl<'a, 'b, N, const D: usize, Key, Value> NodeRef<'a, 'b, N, D, Key, Value> {
         unsafe { self.ops.len(self.node, self.level) }
     }
 
-    pub(crate) fn get(&self, key: &Key) -> Option<&'b Value>
+    pub(crate) fn get<Q>(&self, key: &Q) -> Option<&'b Value>
     where
         N: Ord,
-        Key: Eq + Bounded<N, D>,
+        Key: Borrow<Q>,
+        Q: Eq + Bounded<N, D> + ?Sized,
     {
         unsafe { self.ops.get(self.node, self.level, key) }
     }

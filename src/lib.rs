@@ -18,7 +18,7 @@ use bounds::Bounded;
 use filter::SpatialFilter;
 use iter::FilterIter;
 use node::{Node, NodeOps};
-use std::{fmt::Debug, ops::Sub};
+use std::{borrow::Borrow, fmt::Debug, ops::Sub};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct RTreeConfig {
@@ -172,7 +172,15 @@ where
     /// Returns a reference to the value associated with the given key, or `None`
     /// if no such value exists. If multiple entries with the same key exist, a
     /// reference to the the value of the first entry is returned.
-    pub fn get(&self, key: &Key) -> Option<&Value> {
+    ///
+    /// Borrowing is done using the `Borrow` trait, so the key can be of a
+    /// different type than the key type of the R-tree. The Bounded trait must
+    /// be equivalent for borrowed and owned keys, like Eq, Ord and Hash.
+    pub fn get<Q>(&self, key: &Q) -> Option<&Value>
+    where
+        Key: Borrow<Q>,
+        Q: Eq + Bounded<N, D> + ?Sized,
+    {
         let ops = self.ops();
         let root = unsafe { ops.wrap_ref(&self.root, self.height) };
         root.get(key)
@@ -181,7 +189,15 @@ where
     /// Returns a mutable reference to the value associated with the given key,
     /// or `None` if no such value exists. If multiple entries with the same key
     /// exist, a reference to the the value of the first entry is returned.
-    pub fn get_mut(&mut self, key: &Key) -> Option<&mut Value> {
+    ///
+    /// Borrowing is done using the `Borrow` trait, so the key can be of a
+    /// different type than the key type of the R-tree. The Bounded trait must
+    /// be equivalent for borrowed and owned keys, like Eq, Ord and Hash.
+    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut Value>
+    where
+        Key: Borrow<Q>,
+        Q: Eq + Bounded<N, D> + ?Sized,
+    {
         let ops = self.ops();
         let root = unsafe { ops.wrap_ref_mut(&mut self.root, self.height) };
         root.get_mut(key)
@@ -190,7 +206,15 @@ where
     /// Removes the entry with the given key, returning the value of the entry
     /// if it existed. If multiple entries with the same key exist, the first
     /// entry is removed.
-    pub fn remove(&mut self, key: &Key) -> Option<Value> {
+    ///
+    /// Borrowing is done using the `Borrow` trait, so the key can be of a
+    /// different type than the key type of the R-tree. The Bounded trait must
+    /// be equivalent for borrowed and owned keys, like Eq, Ord and Hash.
+    pub fn remove<Q>(&mut self, key: &Q) -> Option<Value>
+    where
+        Key: Borrow<Q>,
+        Q: Eq + Bounded<N, D> + ?Sized,
+    {
         let ops = self.ops();
         let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
         root.remove(key)
