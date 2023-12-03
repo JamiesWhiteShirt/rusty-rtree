@@ -1,7 +1,6 @@
 use std::{
     borrow::Borrow,
     fmt::Debug,
-    marker::PhantomData,
     mem::{self, ManuallyDrop},
     num::NonZeroUsize,
     ops::Sub,
@@ -52,8 +51,6 @@ impl<N, const D: usize, Key, Value> NodeChildren<N, D, Key, Value> {
 pub(crate) struct Node<N, const D: usize, Key, Value> {
     pub(crate) bounds: Bounds<N, D>,
     children: NodeChildren<N, D, Key, Value>,
-
-    _phantom: PhantomData<(Key, Value)>,
 }
 
 impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
@@ -62,12 +59,7 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
         children: NodeChildren<N, D, Key, Value>,
         _level: usize,
     ) -> Self {
-        Node {
-            bounds,
-            children,
-
-            _phantom: PhantomData,
-        }
+        Node { bounds, children }
     }
 
     pub(crate) unsafe fn inner_children(&self) -> &FCVec<Node<N, D, Key, Value>> {
@@ -955,8 +947,6 @@ where
                     ops: self.ops,
                     level: self.level,
                     children: &self.node.children,
-
-                    _phantom: PhantomData,
                 },
             )
             .finish()
@@ -1032,8 +1022,6 @@ where
                     ops: self.ops,
                     level: self.level,
                     children: &self.node.children,
-
-                    _phantom: PhantomData,
                 },
             )
             .finish()
@@ -1044,8 +1032,6 @@ pub(crate) struct NodeChildrenRef<'a, 'b, N, const D: usize, Key, Value> {
     ops: &'a NodeOps<N, D, Key, Value>,
     level: usize,
     children: &'b NodeChildren<N, D, Key, Value>,
-
-    _phantom: PhantomData<&'b (N, Key, Value)>,
 }
 
 impl<'a, 'b, N, const D: usize, Key, Value> Debug for NodeChildrenRef<'a, 'b, N, D, Key, Value>
