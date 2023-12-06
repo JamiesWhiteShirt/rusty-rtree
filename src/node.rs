@@ -4,12 +4,12 @@ use std::{
     mem::{self, ManuallyDrop},
     num::NonZeroUsize,
     ops::Sub,
-    ptr,
+    ptr, slice,
 };
 
 use crate::{
     bounds::{Bounded, Bounds},
-    fc_vec::{FCVec, FCVecContainer, FCVecOps},
+    fc_vec::{FCVec, FCVecContainer, FCVecOps, FCVecRef, FCVecRefMut},
     intersects::Intersects,
     select, split,
     util::{get_only, GetOnlyResult},
@@ -120,17 +120,16 @@ impl NodeOps {
         Key: Bounded<N, D>,
         N: Ord + num_traits::Bounded + Clone + Eq + Debug,
     {
-        let bounds = if level > 0 {
-            let children = self.children.wrap_ref(&node.children.inner);
-            Bounds::containing_all(
-                children
-                    .iter()
-                    .map(|node| self.debug_assert_bvh(node, level - 1)),
-            )
-        } else {
-            let children = self.children.wrap_ref(&node.children.leaf);
-            Bounds::containing_all(children.iter().map(|(key, _)| key.bounds()))
+        let children = self.children(node, level);
+        let bounds = match children {
+            NodeChildrenRef::Inner(children) => {
+                Bounds::containing_all(children.iter().map(|child| child.debug_assert_bvh()))
+            }
+            NodeChildrenRef::Leaf(children) => {
+                Bounds::containing_all(children.iter().map(|(key, _)| key.bounds()))
+            }
         };
+
         assert_eq!(node.bounds, bounds);
         bounds
     }
@@ -146,16 +145,16 @@ impl NodeOps {
         Value: Debug + Eq,
     {
         assert_eq!(a.bounds, b.bounds);
-        if level > 0 {
-            let a_children = self.children.wrap_ref(&a.children.inner);
-            let b_children = self.children.wrap_ref(&b.children.inner);
+        if let Some(level) = NonZeroUsize::new(level) {
+            let a_children = self.inner_children(a, level);
+            let b_children = self.inner_children(b, level);
             assert_eq!(a_children.len(), b_children.len());
             for (a_child, b_child) in a_children.iter().zip(b_children.iter()) {
-                self.debug_assert_eq(a_child, b_child, level - 1);
+                self.debug_assert_eq(a_child.node, b_child.node, level.get() - 1);
             }
         } else {
-            let a_children = self.children.wrap_ref(&a.children.leaf);
-            let b_children = self.children.wrap_ref(&b.children.leaf);
+            let a_children = self.leaf_children(a);
+            let b_children = self.leaf_children(b);
             assert_eq!(*a_children, *b_children);
         }
     }
@@ -166,21 +165,13 @@ impl NodeOps {
         level: usize,
         is_root: bool,
     ) {
+        let children = self.children(node, level);
         if !is_root {
-            assert!(
-                if level > 0 {
-                    let children = self.children.wrap_ref(&node.children.inner);
-                    children.len()
-                } else {
-                    let children = self.children.wrap_ref(&node.children.leaf);
-                    children.len()
-                } >= self.min_children
-            );
+            assert!(children.len() >= self.min_children);
         }
-        if level > 0 {
-            let children = self.children.wrap_ref(&node.children.inner);
+        if let NodeChildrenRef::Inner(children) = children {
             for child in children {
-                self.debug_assert_min_children(child, level - 1, false);
+                self.debug_assert_min_children(child.node, level - 1, false);
             }
         }
     }
@@ -205,7 +196,7 @@ impl NodeOps {
         }
     }
 
-    pub(crate) unsafe fn empty_inner<'a, N, const D: usize, Key, Value>(
+    pub(crate) fn empty_inner<'a, N, const D: usize, Key, Value>(
         &'a self,
         level: NonZeroUsize,
     ) -> NodeContainer<'a, N, D, Key, Value>
@@ -740,6 +731,57 @@ impl NodeOps {
         return None;
     }
 
+    unsafe fn children<'a, 'b, N, const D: usize, Key, Value>(
+        &'a self,
+        node: &'b Node<N, D, Key, Value>,
+        level: usize,
+    ) -> NodeChildrenRef<'a, 'b, N, D, Key, Value> {
+        if let Some(level) = NonZeroUsize::new(level) {
+            NodeChildrenRef::Inner(InnerNodeChildrenRef {
+                ops: self,
+                level,
+                children: &node.children.inner,
+            })
+        } else {
+            NodeChildrenRef::Leaf(self.children.wrap_ref(&node.children.leaf))
+        }
+    }
+
+    unsafe fn inner_children<'a, 'b, N, const D: usize, Key, Value>(
+        &'a self,
+        node: &'b Node<N, D, Key, Value>,
+        level: NonZeroUsize,
+    ) -> InnerNodeChildrenRef<'a, 'b, N, D, Key, Value> {
+        InnerNodeChildrenRef {
+            ops: self,
+            level,
+            children: &node.children.inner,
+        }
+    }
+
+    unsafe fn leaf_children<'a, 'b, N, const D: usize, Key, Value>(
+        &'a self,
+        node: &'b Node<N, D, Key, Value>,
+    ) -> FCVecRef<'a, 'b, (Key, Value)> {
+        self.children.wrap_ref(&node.children.leaf)
+    }
+
+    unsafe fn children_mut<'a, 'b, N, const D: usize, Key, Value>(
+        &'a self,
+        node: &'b mut Node<N, D, Key, Value>,
+        level: usize,
+    ) -> NodeChildrenRefMut<'a, 'b, N, D, Key, Value> {
+        if let Some(level) = NonZeroUsize::new(level) {
+            NodeChildrenRefMut::Inner(InnerNodeChildrenRefMut {
+                ops: self,
+                level,
+                children: &mut node.children.inner,
+            })
+        } else {
+            NodeChildrenRefMut::Leaf(self.children.wrap_ref_mut(&mut node.children.leaf))
+        }
+    }
+
     pub(crate) unsafe fn wrap<N, const D: usize, Key, Value>(
         &self,
         node: Node<N, D, Key, Value>,
@@ -904,6 +946,10 @@ pub(crate) struct NodeContainer<'a, N, const D: usize, Key, Value> {
 }
 
 impl<'a, N, const D: usize, Key, Value> NodeContainer<'a, N, D, Key, Value> {
+    fn children(&'a self) -> NodeChildrenRef<'a, 'a, N, D, Key, Value> {
+        unsafe { self.ops.children(&self.node, self.level) }
+    }
+
     pub(crate) unsafe fn take_leaf_children(self) -> FCVecContainer<'a, (Key, Value)> {
         if self.level > 0 {
             panic!("Cannot take leaf children from an inner node");
@@ -957,14 +1003,7 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Node")
             .field("bounds", &self.node.bounds)
-            .field(
-                "node",
-                &NodeChildrenRef::<N, D, Key, Value> {
-                    ops: self.ops,
-                    level: self.level,
-                    children: &self.node.children,
-                },
-            )
+            .field("node", &self.children())
             .finish()
     }
 }
@@ -976,6 +1015,10 @@ pub(crate) struct NodeRef<'a, 'b, N, const D: usize, Key, Value> {
 }
 
 impl<'a, 'b, N, const D: usize, Key, Value> NodeRef<'a, 'b, N, D, Key, Value> {
+    pub(crate) fn children(&self) -> NodeChildrenRef<'a, 'b, N, D, Key, Value> {
+        unsafe { self.ops.children(&self.node, self.level) }
+    }
+
     pub(crate) fn len(&self) -> usize {
         unsafe { self.ops.len(self.node, self.level) }
     }
@@ -1032,22 +1075,78 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Node")
             .field("bounds", &self.node.bounds)
-            .field(
-                "node",
-                &NodeChildrenRef::<N, D, Key, Value> {
-                    ops: self.ops,
-                    level: self.level,
-                    children: &self.node.children,
-                },
-            )
+            .field("node", &self.children())
             .finish()
     }
 }
 
-pub(crate) struct NodeChildrenRef<'a, 'b, N, const D: usize, Key, Value> {
+pub(crate) struct InnerNodeChildrenRef<'a, 'b, N, const D: usize, Key, Value> {
     ops: &'a NodeOps,
-    level: usize,
-    children: &'b NodeChildren<N, D, Key, Value>,
+    level: NonZeroUsize,
+    children: &'b FCVec<Node<N, D, Key, Value>>,
+}
+
+impl<'a, 'b, N, const D: usize, Key, Value> Debug for InnerNodeChildrenRef<'a, 'b, N, D, Key, Value>
+where
+    N: Debug,
+    Key: Debug,
+    Value: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl<'a, 'b, N, const D: usize, Key, Value> InnerNodeChildrenRef<'a, 'b, N, D, Key, Value> {
+    fn len(&self) -> usize {
+        self.children.len()
+    }
+
+    fn iter(&self) -> InnerNodeChildrenRefIter<'a, 'b, N, D, Key, Value> {
+        InnerNodeChildrenRefIter {
+            ops: self.ops,
+            level: self.level,
+            children: self.children.iter(),
+        }
+    }
+}
+
+pub(crate) struct InnerNodeChildrenRefIter<'a, 'b, N, const D: usize, Key, Value> {
+    ops: &'a NodeOps,
+    level: NonZeroUsize,
+    children: slice::Iter<'b, Node<N, D, Key, Value>>,
+}
+
+impl<'a, 'b, N, const D: usize, Key, Value> IntoIterator
+    for InnerNodeChildrenRef<'a, 'b, N, D, Key, Value>
+{
+    type Item = NodeRef<'a, 'b, N, D, Key, Value>;
+    type IntoIter = InnerNodeChildrenRefIter<'a, 'b, N, D, Key, Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        InnerNodeChildrenRefIter {
+            ops: self.ops,
+            level: self.level,
+            children: self.children.iter(),
+        }
+    }
+}
+
+impl<'a, 'b, N, const D: usize, Key, Value> Iterator
+    for InnerNodeChildrenRefIter<'a, 'b, N, D, Key, Value>
+{
+    type Item = NodeRef<'a, 'b, N, D, Key, Value>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.children
+            .next()
+            .map(|node| unsafe { self.ops.wrap_ref(node, self.level.get() - 1) })
+    }
+}
+
+pub(crate) enum NodeChildrenRef<'a, 'b, N, const D: usize, Key, Value> {
+    Inner(InnerNodeChildrenRef<'a, 'b, N, D, Key, Value>),
+    Leaf(FCVecRef<'a, 'b, (Key, Value)>),
 }
 
 impl<'a, 'b, N, const D: usize, Key, Value> Debug for NodeChildrenRef<'a, 'b, N, D, Key, Value>
@@ -1057,20 +1156,29 @@ where
     Value: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.level > 0 {
-            f.debug_list()
-                .entries(unsafe {
-                    self.children.inner.iter().map(|node| NodeRef {
-                        ops: self.ops,
-                        level: self.level - 1,
-                        node,
-                    })
-                })
-                .finish()
-        } else {
-            f.debug_list()
-                .entries(unsafe { self.children.leaf.iter().map(|(key, value)| (key, value)) })
-                .finish()
+        match self {
+            NodeChildrenRef::Inner(children) => children.fmt(f),
+            NodeChildrenRef::Leaf(children) => children.fmt(f),
         }
     }
+}
+
+impl<'a, 'b, N, const D: usize, Key, Value> NodeChildrenRef<'a, 'b, N, D, Key, Value> {
+    fn len(&self) -> usize {
+        match self {
+            NodeChildrenRef::Inner(children) => children.len(),
+            NodeChildrenRef::Leaf(children) => children.len(),
+        }
+    }
+}
+
+struct InnerNodeChildrenRefMut<'a, 'b, N, const D: usize, Key, Value> {
+    ops: &'a NodeOps,
+    level: NonZeroUsize,
+    children: &'b mut FCVec<Node<N, D, Key, Value>>,
+}
+
+enum NodeChildrenRefMut<'a, 'b, N, const D: usize, Key, Value> {
+    Inner(InnerNodeChildrenRefMut<'a, 'b, N, D, Key, Value>),
+    Leaf(FCVecRefMut<'a, 'b, (Key, Value)>),
 }
