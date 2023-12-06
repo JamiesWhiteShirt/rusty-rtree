@@ -399,25 +399,25 @@ impl NodeOps {
         Key: Clone,
         Value: Clone,
     {
-        if level > 0 {
-            let children = self.children.wrap_ref(&node.children.inner);
-            let mut clone_children = self.children.new();
-            for child in children {
-                clone_children.push(self.clone(child, level - 1).unwrap());
-            }
-            self.wrap(
-                Node::new(
-                    node.bounds.clone(),
-                    NodeChildren {
-                        inner: ManuallyDrop::new(clone_children.unwrap()),
-                    },
+        let children = self.children(node, level);
+        match children {
+            NodeChildrenRef::Inner(children) => {
+                let mut clone_children = self.children.new();
+                for child in children {
+                    clone_children.push(child.clone().unwrap());
+                }
+                self.wrap(
+                    Node::new(
+                        node.bounds.clone(),
+                        NodeChildren {
+                            inner: ManuallyDrop::new(clone_children.unwrap()),
+                        },
+                        level,
+                    ),
                     level,
-                ),
-                level,
-            )
-        } else {
-            let children = self.children.wrap_ref(&node.children.leaf);
-            self.wrap(
+                )
+            }
+            NodeChildrenRef::Leaf(children) => self.wrap(
                 Node::new(
                     node.bounds.clone(),
                     NodeChildren {
@@ -426,7 +426,7 @@ impl NodeOps {
                     level,
                 ),
                 level,
-            )
+            ),
         }
     }
 
@@ -435,46 +435,46 @@ impl NodeOps {
         node: &Node<N, D, Key, Value>,
         level: usize,
     ) -> usize {
-        if level > 0 {
-            let children = self.children.wrap_ref(&node.children.inner);
-            let mut size = 0;
-            for child in children {
-                size += self.len(child, level - 1);
+        let children = self.children(node, level);
+        match children {
+            NodeChildrenRef::Inner(children) => {
+                let mut size = 0;
+                for child in children {
+                    size += child.len();
+                }
+                size
             }
-            size
-        } else {
-            let children = self.children.wrap_ref(&node.children.leaf);
-            children.len()
+            NodeChildrenRef::Leaf(children) => children.len(),
         }
     }
 
-    unsafe fn get<'a, N, const D: usize, Key, Value, Q>(
-        &self,
-        node: &'a Node<N, D, Key, Value>,
+    unsafe fn get<'a, 'b, N, const D: usize, Key, Value, Q>(
+        &'a self,
+        node: &'b Node<N, D, Key, Value>,
         level: usize,
         key: &Q,
-    ) -> Option<&'a Value>
+    ) -> Option<&'b Value>
     where
         N: Ord,
         Key: Borrow<Q>,
         Q: Bounded<N, D> + Eq + ?Sized,
     {
-        if level > 0 {
-            let children = self.children.wrap_ref(&node.children.inner);
-            for child in children {
-                if child.bounds.contains(&key.bounds()) {
-                    if let Some(value) = self.get(child, level - 1, key) {
-                        return Some(value);
+        let children: NodeChildrenRef<'a, 'b, N, D, Key, Value> = self.children(node, level);
+        match children {
+            NodeChildrenRef::Inner(children) => {
+                for child in children {
+                    if child.node.bounds.contains(&key.bounds()) {
+                        if let Some(value) = self.get(child.node, level - 1, key) {
+                            return Some(value);
+                        }
                     }
                 }
+                None
             }
-            None
-        } else {
-            node.children
-                .leaf
-                .iter()
+            NodeChildrenRef::Leaf(children) => children
+                .into_iter()
                 .find(|(k, _)| k.borrow() == key)
-                .map(|(_, v)| v)
+                .map(|(_, v)| v),
         }
     }
 
