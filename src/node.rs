@@ -243,7 +243,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
             (NodeChildrenRefMut::Leaf(mut children), NodeEntry::Leaf(entry)) => {
                 if let Some(overflow_entry) = children.try_push(entry) {
                     let (new_bounds, sibling_bounds, sibling_children) =
-                        split::quadratic_n(min_children, children, overflow_entry);
+                        split::quadratic(min_children, children, overflow_entry);
                     self.node.bounds = new_bounds;
                     Some(unsafe {
                         self.ops.wrap(
@@ -1112,7 +1112,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, N, D, Key, V
     {
         let children = unsafe { self.ops.children.wrap_ref_mut(&mut self.children) };
         let (new_bounds, sibling_bounds, sibling_children) =
-            unsafe { split::quadratic_n(self.ops.min_children, children, overflow_node.unwrap()) };
+            unsafe { split::quadratic(self.ops.min_children, children, overflow_node.unwrap()) };
         (new_bounds, unsafe {
             self.ops.wrap(
                 Node::new(

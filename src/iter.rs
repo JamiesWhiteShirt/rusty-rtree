@@ -30,13 +30,6 @@ impl<'a, N, const D: usize, Key, Value> Iter<'a, N, D, Key, Value> {
         });
         Iter { height, stack }
     }
-
-    pub(crate) fn empty() -> Iter<'a, N, D, Key, Value> {
-        Iter {
-            height: 0,
-            stack: Vec::new(),
-        }
-    }
 }
 
 impl<'a, N, const D: usize, Key, Value> Drop for Iter<'a, N, D, Key, Value> {
@@ -115,13 +108,6 @@ impl<'a, N, const D: usize, Key, Value> IterMut<'a, N, D, Key, Value> {
             }
         });
         IterMut { height, stack }
-    }
-
-    pub(crate) fn empty() -> IterMut<'a, N, D, Key, Value> {
-        IterMut {
-            height: 0,
-            stack: Vec::new(),
-        }
     }
 }
 
@@ -217,14 +203,6 @@ where
             filter,
             height,
             stack,
-        }
-    }
-
-    pub(crate) fn empty(filter: Filter) -> FilterIter<'a, N, D, Key, Value, Filter> {
-        FilterIter {
-            filter,
-            height: 0,
-            stack: Vec::new(),
         }
     }
 }
@@ -331,14 +309,6 @@ where
             filter,
             height,
             stack,
-        }
-    }
-
-    pub(crate) fn empty(filter: Filter) -> FilterIterMut<'a, N, D, Key, Value, Filter> {
-        FilterIterMut {
-            filter,
-            height: 0,
-            stack: Vec::new(),
         }
     }
 }

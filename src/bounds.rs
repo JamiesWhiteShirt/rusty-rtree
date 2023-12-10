@@ -6,7 +6,7 @@ use std::{
 use array_init::from_iter;
 use noisy_float::types::{n64, N64};
 
-use crate::{intersects::Intersects, line::Line, ray::Ray, vector::Vector};
+use crate::{geom::line::Line, geom::ray::Ray, intersects::Intersects, vector::Vector};
 
 pub trait Bounded<N, const D: usize> {
     fn bounds(&self) -> Bounds<N, D>;

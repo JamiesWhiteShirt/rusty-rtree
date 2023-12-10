@@ -86,59 +86,7 @@ where
 /// Splits values into two groups. When it returns, values contains the values of
 /// the first group while the other group is returned along with its minimum
 /// bounds.
-pub fn quadratic<N, const D: usize, Value>(
-    max_children: usize,
-    min_children: usize,
-    values: &mut Vec<Value>,
-    overflow_value: Value,
-) -> (Bounds<N, D>, Bounds<N, D>, Vec<Value>)
-where
-    N: Ord + Clone + Sub<Output = N> + Into<f64>,
-    Value: Bounded<N, D>,
-{
-    if values.len() < 1 {
-        panic!("Must have more than 2 children to split!");
-    }
-
-    let mut group_2 = Vec::with_capacity(max_children);
-    group_2.push(seed_split_groups(values, overflow_value));
-    let (mut bounds_1, mut bounds_2) = (values[0].bounds(), group_2[0].bounds());
-
-    let mut group_1_len = 1;
-    // children is now partitioned such that children[0..group_1_len] is group_1
-    // and children[group_1_len..] is the remaining children to be distributed
-    // into groups.
-    // When the loop terminates, children is group_1.
-    while group_1_len < values.len() {
-        let remaining = &values[group_1_len..];
-        let (candidate_1, candidate_2) = (
-            best_candidate_for_group(remaining, &bounds_1).unwrap(),
-            best_candidate_for_group(remaining, &bounds_2).unwrap(),
-        );
-
-        let add_to_group_1 = if candidate_1.1 < candidate_2.1 {
-            group_2.len() + remaining.len() - 1 >= min_children
-        } else {
-            group_1_len + remaining.len() - 1 == min_children
-        };
-
-        if add_to_group_1 {
-            bounds_1 = Bounds::containing(&bounds_1, &remaining[candidate_1.0].bounds());
-            values.swap(group_1_len + candidate_1.0, group_1_len);
-            group_1_len += 1;
-        } else {
-            bounds_2 = Bounds::containing(&bounds_2, &remaining[candidate_2.0].bounds());
-            group_2.push(values.remove(group_1_len + candidate_2.0))
-        }
-    }
-
-    (bounds_1, bounds_2, group_2)
-}
-
-/// Splits values into two groups. When it returns, values contains the values of
-/// the first group while the other group is returned along with its minimum
-/// bounds.
-pub(crate) fn quadratic_n<'a, N, const D: usize, Value>(
+pub(crate) fn quadratic<'a, N, const D: usize, Value>(
     min_children: usize,
     mut values: FCVecRefMut<'a, Value>,
     overflow_value: Value,

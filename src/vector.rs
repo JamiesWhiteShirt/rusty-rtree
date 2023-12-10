@@ -8,8 +8,8 @@ use array_init::array_init;
 
 use crate::{
     bounds::{Bounded, Bounds},
+    geom::sphere::Sphere,
     intersects::Intersects,
-    sphere::Sphere,
 };
 
 #[derive(Clone, Copy, PartialEq)]

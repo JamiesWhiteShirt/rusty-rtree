@@ -1,18 +1,16 @@
 #![feature(test)]
 
-mod bounds;
+pub mod bounds;
 mod fc_vec;
-mod filter;
-mod intersects;
+pub mod filter;
+pub mod geom;
+pub mod intersects;
 mod iter;
-mod line;
 mod node;
-mod ray;
 mod select;
-mod sphere;
 mod split;
 mod util;
-mod vector;
+pub mod vector;
 
 use bounds::Bounded;
 use filter::SpatialFilter;
@@ -283,8 +281,8 @@ mod tests {
     use noisy_float::types::N32;
 
     use crate::filter::BoundedIntersectionFilter;
-    use crate::line::Line;
-    use crate::sphere::Sphere;
+    use crate::geom::line::Line;
+    use crate::geom::sphere::Sphere;
     use crate::vector::Vector;
     use crate::RTreeConfig;
 
