@@ -28,7 +28,7 @@ impl<N, const D: usize> Bounds<N, D> {
         Bounds { min, max }
     }
 
-    pub fn containing(lhs: &Bounds<N, D>, rhs: &Bounds<N, D>) -> Bounds<N, D>
+    pub fn union(lhs: &Bounds<N, D>, rhs: &Bounds<N, D>) -> Bounds<N, D>
     where
         N: Ord + Clone,
     {
@@ -51,13 +51,13 @@ impl<N, const D: usize> Bounds<N, D> {
         Bounds { min, max }
     }
 
-    pub fn containing_all(bounds: impl IntoIterator<Item = Bounds<N, D>>) -> Bounds<N, D>
+    pub fn union_all(bounds: impl IntoIterator<Item = Bounds<N, D>>) -> Bounds<N, D>
     where
         N: Ord + num_traits::Bounded + Clone,
     {
         let mut res = Bounds::empty();
         for bounds in bounds {
-            res = Self::containing(&res, &bounds);
+            res = Self::union(&res, &bounds);
         }
         res
     }

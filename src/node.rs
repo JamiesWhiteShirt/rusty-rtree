@@ -236,7 +236,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                     self.node.bounds = new_bounds;
                     Some(sibling)
                 } else {
-                    self.node.bounds = Bounds::containing(&self.node.bounds, &entry_bounds);
+                    self.node.bounds = Bounds::union(&self.node.bounds, &entry_bounds);
                     None
                 }
             }
@@ -258,7 +258,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                         )
                     })
                 } else {
-                    self.node.bounds = Bounds::containing(&self.node.bounds, &entry_bounds);
+                    self.node.bounds = Bounds::union(&self.node.bounds, &entry_bounds);
                     None
                 }
             }
@@ -292,11 +292,10 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
             if let Some(new_child) = insert_child.insert(entry) {
                 // The child node split, so the entries in new_child are no longer part of self
                 // Recompute the bounds of self before trying to insert new_child into self
-                self.node.bounds =
-                    Bounds::containing_all(children.iter().map(|child| child.bounds()));
+                self.node.bounds = Bounds::union_all(children.iter().map(|child| child.bounds()));
                 self.self_insert(NodeEntry::Inner(new_child))
             } else {
-                self.node.bounds = Bounds::containing(&self.node.bounds, &entry_bounds);
+                self.node.bounds = Bounds::union(&self.node.bounds, &entry_bounds);
                 None
             }
         } else {
@@ -337,13 +336,11 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                             if let Some(new_child) = new_child {
                                 // The child node split, so the entries in new_child are no longer part of self
                                 // Recompute the bounds of self before trying to insert new_child into self
-                                self.node.bounds = Bounds::containing_all(
-                                    children.iter().map(|child| child.bounds()),
-                                );
+                                self.node.bounds =
+                                    Bounds::union_all(children.iter().map(|child| child.bounds()));
                                 self.self_insert(NodeEntry::Inner(new_child))
                             } else {
-                                self.node.bounds =
-                                    Bounds::containing(&self.node.bounds, &entry_bounds);
+                                self.node.bounds = Bounds::union(&self.node.bounds, &entry_bounds);
                                 None
                             },
                         )
@@ -427,7 +424,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                             }
 
                             self.node.bounds =
-                                Bounds::containing_all(children.iter().map(|child| child.bounds()));
+                                Bounds::union_all(children.iter().map(|child| child.bounds()));
 
                             return Some(value);
                         }
@@ -440,7 +437,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                 if let Some(i) = index {
                     let value = children.swap_remove(i).1;
                     self.node.bounds =
-                        Bounds::containing_all(children.iter().map(|(key, _)| key.bounds()));
+                        Bounds::union_all(children.iter().map(|(key, _)| key.bounds()));
 
                     return Some(value);
                 }
@@ -546,7 +543,7 @@ impl<'a, N, const D: usize, Key, Value> RootNodeRefMut<'a, N, D, Key, Value> {
     where
         N: Ord + Clone + num_traits::Bounded,
     {
-        let bounds = Bounds::containing(&self.node.bounds, &sibling.node.bounds);
+        let bounds = Bounds::union(&self.node.bounds, &sibling.node.bounds);
         let mut next_root_children = self.ops.children.new();
         unsafe {
             next_root_children.push(ptr::read(self.node));
@@ -823,10 +820,10 @@ impl<'a, N, const D: usize, Key, Value> NodeRef<'a, N, D, Key, Value> {
     {
         let bounds = match self.children() {
             NodeChildrenRef::Inner(children) => {
-                Bounds::containing_all(children.iter().map(|child| child._debug_assert_bvh()))
+                Bounds::union_all(children.iter().map(|child| child._debug_assert_bvh()))
             }
             NodeChildrenRef::Leaf(children) => {
-                Bounds::containing_all(children.iter().map(|(key, _)| key.bounds()))
+                Bounds::union_all(children.iter().map(|(key, _)| key.bounds()))
             }
         };
 

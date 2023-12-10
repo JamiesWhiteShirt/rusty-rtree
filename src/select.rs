@@ -9,7 +9,7 @@ where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
 {
     fn volume_increase_of_min_bounds(&self, other: &Self) -> N64 {
-        Bounds::containing(self, other).volume() - self.volume()
+        Bounds::union(self, other).volume() - self.volume()
     }
 }
 

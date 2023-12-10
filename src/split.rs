@@ -24,7 +24,7 @@ where
     let mut idx_1 = 0;
     let mut idx_2 = values.len();
     for i in 0..values.len() {
-        let volume = Bounds::containing(&values[i].bounds(), &overflow_value.bounds()).volume();
+        let volume = Bounds::union(&values[i].bounds(), &overflow_value.bounds()).volume();
         if volume > greatest_volume_increase {
             greatest_volume_increase = volume;
             idx_1 = i;
@@ -33,9 +33,9 @@ where
 
     for i in 0..values.len() - 1 {
         for j in i + 1..values.len() {
-            let volume = Bounds::containing(
+            let volume = Bounds::union(
                 &values[i].bounds(),
-                &Bounds::containing(&values[j].bounds(), &overflow_value.bounds()),
+                &Bounds::union(&values[j].bounds(), &overflow_value.bounds()),
             )
             .volume();
             if volume > greatest_volume_increase {
@@ -79,7 +79,7 @@ where
     children
         .into_iter()
         .enumerate()
-        .map(|(i, value)| (i, Bounds::containing(&value.bounds(), bounds).volume()))
+        .map(|(i, value)| (i, Bounds::union(&value.bounds(), bounds).volume()))
         .min_by_key(|(_, volume)| *volume)
 }
 
@@ -122,11 +122,11 @@ where
         };
 
         if add_to_group_1 {
-            bounds_1 = Bounds::containing(&bounds_1, &remaining[candidate_1.0].bounds());
+            bounds_1 = Bounds::union(&bounds_1, &remaining[candidate_1.0].bounds());
             values.swap(group_1_len + candidate_1.0, group_1_len);
             group_1_len += 1;
         } else {
-            bounds_2 = Bounds::containing(&bounds_2, &remaining[candidate_2.0].bounds());
+            bounds_2 = Bounds::union(&bounds_2, &remaining[candidate_2.0].bounds());
             group_2.push(values.swap_remove(group_1_len + candidate_2.0))
         }
     }
