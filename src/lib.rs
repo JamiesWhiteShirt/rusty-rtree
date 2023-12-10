@@ -229,14 +229,14 @@ where
         root.len()
     }
 
-    fn debug_assert_bvh(&self)
+    fn _debug_assert_bvh(&self)
     where
         N: Debug,
     {
-        self.node_ref().debug_assert_bvh();
+        self.node_ref()._debug_assert_bvh();
     }
 
-    fn debug_assert_eq(a: &Self, b: &Self)
+    fn _debug_assert_eq(a: &Self, b: &Self)
     where
         N: Debug + Eq,
         Key: Debug + Eq,
@@ -244,14 +244,14 @@ where
     {
         assert_eq!(a.config, b.config);
         assert_eq!(a.height, b.height);
-        a.node_ref().debug_assert_eq(&b.node_ref());
+        a.node_ref()._debug_assert_eq(&b.node_ref());
     }
 
-    fn debug_assert_min_children(&self)
+    fn _debug_assert_min_children(&self)
     where
         N: Debug,
     {
-        self.node_ref().debug_assert_min_children(true);
+        self.node_ref()._debug_assert_min_children(true);
     }
 }
 
@@ -398,7 +398,7 @@ mod tests {
                 let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
                 let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
                 tree.insert(Bounds { min, max }, i);
-                tree.debug_assert_bvh();
+                tree._debug_assert_bvh();
                 assert_eq!(tree.len(), usize::from(i + 1))
             }
         }
@@ -440,12 +440,12 @@ mod tests {
                 let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
                 let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
                 tree.insert(Bounds { min, max }, i);
-                tree.debug_assert_bvh();
+                tree._debug_assert_bvh();
             }
         }
 
         let clone = tree.clone();
-        RTree::<i32, 2, Bounds<i32, 2>, i32>::debug_assert_eq(&tree, &clone);
+        RTree::_debug_assert_eq(&tree, &clone);
     }
 
     #[test]
@@ -465,8 +465,8 @@ mod tests {
                 let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
                 let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
                 tree.insert(Bounds { min, max }, i);
-                tree.debug_assert_bvh();
-                tree.debug_assert_min_children();
+                tree._debug_assert_bvh();
+                tree._debug_assert_min_children();
             }
         }
 
@@ -480,7 +480,7 @@ mod tests {
                 let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
                 let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
                 assert_eq!(tree.remove(&Bounds { min, max }), Some(i));
-                tree.debug_assert_bvh();
+                tree._debug_assert_bvh();
             }
         }
 
@@ -624,8 +624,8 @@ mod tests {
             stars.insert(pos, info);
         }
 
-        stars.debug_assert_bvh();
-        stars.debug_assert_min_children();
+        stars._debug_assert_bvh();
+        stars._debug_assert_min_children();
 
         let space: Sphere<N32, 3> = Sphere {
             center: sol_pos,
@@ -649,8 +649,8 @@ mod tests {
             star_lines.insert(Line(sol_pos, *pos), ())
         }
 
-        star_lines.debug_assert_bvh();
-        star_lines.debug_assert_min_children();
+        star_lines._debug_assert_bvh();
+        star_lines._debug_assert_min_children();
 
         Ok(())
     }

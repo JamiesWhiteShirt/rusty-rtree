@@ -221,23 +221,16 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
         N: Ord + Clone + Sub<Output = N> + Into<f64>,
         Key: Bounded<N, D>,
     {
-        if entry.target_level() != self.level {
-            panic!(
-                "cannot insert entry with target level {} in node at level {}",
-                entry.target_level(),
-                self.level
-            );
-        }
         let entry_bounds = entry.bounds();
-        match entry {
-            NodeEntry::Inner(entry) => {
-                // inner entry implies inner node
-                let mut children = match self.children_mut() {
-                    NodeChildrenRefMut::Inner(children) => children,
-                    NodeChildrenRefMut::Leaf(_) => {
-                        unreachable!()
-                    }
-                };
+        let min_children = self.ops.min_children;
+        match (self.children_mut(), entry) {
+            (NodeChildrenRefMut::Inner(mut children), NodeEntry::Inner(entry)) => {
+                if children.level.get() - 1 != entry.level {
+                    panic!(
+                        "cannot insert entry with level {} in node with level {}",
+                        entry.level, children.level
+                    );
+                }
                 if let Some(overflow_node) = children.try_push(entry) {
                     let (new_bounds, sibling) = children.split(overflow_node);
                     self.node.bounds = new_bounds;
@@ -247,15 +240,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                     None
                 }
             }
-            NodeEntry::Leaf(entry) => {
-                let min_children = self.ops.min_children;
-                // leaf entry implies leaf node
-                let mut children = match self.children_mut() {
-                    NodeChildrenRefMut::Inner(_) => {
-                        unreachable!()
-                    }
-                    NodeChildrenRefMut::Leaf(children) => children,
-                };
+            (NodeChildrenRefMut::Leaf(mut children), NodeEntry::Leaf(entry)) => {
                 if let Some(overflow_entry) = children.try_push(entry) {
                     let (new_bounds, sibling_bounds, sibling_children) =
                         split::quadratic_n(min_children, children, overflow_entry);
@@ -276,6 +261,12 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                     self.node.bounds = Bounds::containing(&self.node.bounds, &entry_bounds);
                     None
                 }
+            }
+            (NodeChildrenRefMut::Inner(_), NodeEntry::Leaf(_)) => {
+                panic!("cannot insert leaf entry in inner node")
+            }
+            (NodeChildrenRefMut::Leaf(_), NodeEntry::Inner(_)) => {
+                panic!("cannot insert inner entry in leaf node")
             }
         }
     }
@@ -825,14 +816,14 @@ impl<'a, N, const D: usize, Key, Value> NodeRef<'a, N, D, Key, Value> {
         }
     }
 
-    pub(crate) fn debug_assert_bvh(&self) -> Bounds<N, D>
+    pub(crate) fn _debug_assert_bvh(&self) -> Bounds<N, D>
     where
         Key: Bounded<N, D>,
         N: Ord + num_traits::Bounded + Clone + Eq + Debug,
     {
         let bounds = match self.children() {
             NodeChildrenRef::Inner(children) => {
-                Bounds::containing_all(children.iter().map(|child| child.debug_assert_bvh()))
+                Bounds::containing_all(children.iter().map(|child| child._debug_assert_bvh()))
             }
             NodeChildrenRef::Leaf(children) => {
                 Bounds::containing_all(children.iter().map(|(key, _)| key.bounds()))
@@ -843,24 +834,24 @@ impl<'a, N, const D: usize, Key, Value> NodeRef<'a, N, D, Key, Value> {
         bounds
     }
 
-    pub(crate) fn debug_assert_eq(&self, other: &NodeRef<N, D, Key, Value>)
+    pub(crate) fn _debug_assert_eq(&self, other: &NodeRef<N, D, Key, Value>)
     where
         N: Debug + Eq,
         Key: Debug + Eq,
         Value: Debug + Eq,
     {
         assert_eq!(self.level, other.level);
-        self.children().debug_assert_eq(&other.children());
+        self.children()._debug_assert_eq(&other.children());
     }
 
-    pub(crate) fn debug_assert_min_children(&self, is_root: bool) {
+    pub(crate) fn _debug_assert_min_children(&self, is_root: bool) {
         let children = self.children();
         if !is_root {
             assert!(children.len() >= self.ops.min_children);
         }
         if let NodeChildrenRef::Inner(children) = children {
             for child in children {
-                child.debug_assert_min_children(false);
+                child._debug_assert_min_children(false);
             }
         }
     }
@@ -950,7 +941,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRef<'a, N, D, Key, Valu
         }
     }
 
-    fn debug_assert_eq(&self, other: &InnerNodeChildrenRef<'a, N, D, Key, Value>)
+    fn _debug_assert_eq(&self, other: &InnerNodeChildrenRef<'a, N, D, Key, Value>)
     where
         N: Debug + Eq,
         Key: Debug + Eq,
@@ -959,7 +950,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRef<'a, N, D, Key, Valu
         assert_eq!(self.level, other.level);
         assert_eq!(self.children.len(), other.children.len());
         for (child, other_child) in self.iter().zip(other.iter()) {
-            child.debug_assert_eq(&other_child)
+            child._debug_assert_eq(&other_child)
         }
     }
 }
@@ -1034,7 +1025,7 @@ impl<'a, N, const D: usize, Key, Value> NodeChildrenRef<'a, N, D, Key, Value> {
         }
     }
 
-    fn debug_assert_eq(&self, other: &NodeChildrenRef<N, D, Key, Value>)
+    fn _debug_assert_eq(&self, other: &NodeChildrenRef<N, D, Key, Value>)
     where
         N: Debug + Eq,
         Key: Debug + Eq,
@@ -1042,7 +1033,7 @@ impl<'a, N, const D: usize, Key, Value> NodeChildrenRef<'a, N, D, Key, Value> {
     {
         match (self, other) {
             (NodeChildrenRef::Inner(children), NodeChildrenRef::Inner(other_children)) => {
-                children.debug_assert_eq(other_children)
+                children._debug_assert_eq(other_children)
             }
             (NodeChildrenRef::Leaf(children), NodeChildrenRef::Leaf(other_children)) => {
                 assert_eq!(**children, **other_children)
@@ -1176,18 +1167,6 @@ enum NodeChildrenRefMut<'a, N, const D: usize, Key, Value> {
 }
 
 impl<'a, N, const D: usize, Key, Value> NodeChildrenRefMut<'a, N, D, Key, Value> {
-    fn try_push(
-        &mut self,
-        node: NodeContainer<N, D, Key, Value>,
-    ) -> Option<NodeContainer<N, D, Key, Value>> {
-        match self {
-            NodeChildrenRefMut::Inner(children) => children.try_push(node),
-            NodeChildrenRefMut::Leaf(children) => {
-                panic!("Cannot push a node into a leaf node")
-            }
-        }
-    }
-
     /// Takes the node children from the reference. The referenced node children
     /// become invalid and must not be used.
     ///
