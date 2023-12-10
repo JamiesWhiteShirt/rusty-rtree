@@ -32,7 +32,7 @@ where
     }
 
     for i in 0..values.len() - 1 {
-        for j in i..values.len() {
+        for j in i + 1..values.len() {
             let volume = Bounds::containing(
                 &values[i].bounds(),
                 &Bounds::containing(&values[j].bounds(), &overflow_value.bounds()),
