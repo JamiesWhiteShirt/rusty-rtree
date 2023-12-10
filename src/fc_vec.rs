@@ -467,10 +467,6 @@ impl<'a, T> FCVecRefMut<'a, T> {
         self.data.iter_mut()
     }
 
-    pub(crate) fn iter_mut_take(self) -> IterMut<'a, T> {
-        self.data.iter_mut()
-    }
-
     pub(crate) fn swap_remove(&mut self, index: usize) -> T {
         unsafe { self.ops.swap_remove(self.data, index) }
     }

@@ -141,52 +141,6 @@ impl NodeOps {
         }
     }
 
-    unsafe fn get_mut<'a, N, const D: usize, Key, Value, Q>(
-        &self,
-        node: &'a mut Node<N, D, Key, Value>,
-        level: usize,
-        key: &Q,
-    ) -> Option<&'a mut Value>
-    where
-        N: Ord,
-        Key: Borrow<Q>,
-        Q: Eq + Bounded<N, D> + ?Sized,
-    {
-        let children = self.children_mut(node, level);
-        match children {
-            NodeChildrenRefMut::Inner(children) => {
-                for child in children {
-                    if child.node.bounds.contains(&key.bounds()) {
-                        if let Some(value) = self.get_mut(child.node, level - 1, key) {
-                            return Some(value);
-                        }
-                    }
-                }
-                None
-            }
-            NodeChildrenRefMut::Leaf(children) => children
-                .into_iter()
-                .find(|(k, _)| k.borrow() == key)
-                .map(|(_, v)| v),
-        }
-    }
-
-    unsafe fn children_mut<'a, N, const D: usize, Key, Value>(
-        &self,
-        node: &'a mut Node<N, D, Key, Value>,
-        level: usize,
-    ) -> NodeChildrenRefMut<'a, N, D, Key, Value> {
-        if let Some(level) = NonZeroUsize::new(level) {
-            NodeChildrenRefMut::Inner(InnerNodeChildrenRefMut {
-                ops: *self,
-                level,
-                children: &mut node.children.inner,
-            })
-        } else {
-            NodeChildrenRefMut::Leaf(self.children.wrap_ref_mut(&mut node.children.leaf))
-        }
-    }
-
     unsafe fn wrap<N, const D: usize, Key, Value>(
         &self,
         node: Node<N, D, Key, Value>,
@@ -406,9 +360,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                     GetOnlyResult::Multiple => {
                         // Try to find the key among the children and overwrite it if it
                         // exists. If it doesn't exist, perform a regular insert.
-                        if let Some(value_ref) =
-                            unsafe { self.ops.get_mut(self.node, self.level, &key) }
-                        {
+                        if let Some(value_ref) = self.get_mut(&key) {
                             (Some(std::mem::replace(value_ref, value)), None)
                         } else {
                             (None, self.insert(NodeEntry::Leaf((key, value))))
@@ -425,6 +377,20 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                     (None, self.insert(NodeEntry::Leaf((key, value))))
                 }
             }
+        }
+    }
+
+    fn into_children_mut(self) -> NodeChildrenRefMut<'a, N, D, Key, Value> {
+        if let Some(level) = NonZeroUsize::new(self.level) {
+            NodeChildrenRefMut::Inner(InnerNodeChildrenRefMut {
+                ops: self.ops,
+                level,
+                children: unsafe { &mut self.node.children.inner },
+            })
+        } else {
+            NodeChildrenRefMut::Leaf(unsafe {
+                self.ops.children.wrap_ref_mut(&mut self.node.children.leaf)
+            })
         }
     }
 
@@ -492,20 +458,17 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
         }
     }
 
-    pub(crate) fn get_mut<Q>(self, key: &Q) -> Option<&'a mut Value>
+    pub(crate) fn into_get_mut<Q>(self, key: &Q) -> Option<&'a mut Value>
     where
         N: Ord,
         Key: Borrow<Q>,
         Q: Eq + Bounded<N, D> + ?Sized,
     {
-        unsafe { self.ops.get_mut(self.node, self.level, key) }
-        // TODO: Figure out how to do this without ops get_mut
-        /* let children = self.children_mut();
-        match children {
+        match self.into_children_mut() {
             NodeChildrenRefMut::Inner(children) => {
                 for child in children {
                     if child.node.bounds.contains(&key.bounds()) {
-                        if let Some(value) = child.get_mut(key) {
+                        if let Some(value) = child.into_get_mut(key) {
                             return Some(value);
                         }
                     }
@@ -516,7 +479,31 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                 .into_iter()
                 .find(|(k, _)| k.borrow() == key)
                 .map(|(_, v)| v),
-        } */
+        }
+    }
+
+    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut Value>
+    where
+        N: Ord,
+        Key: Borrow<Q>,
+        Q: Eq + Bounded<N, D> + ?Sized,
+    {
+        match self.children_mut() {
+            NodeChildrenRefMut::Inner(children) => {
+                for child in children {
+                    if child.node.bounds.contains(&key.bounds()) {
+                        if let Some(value) = child.into_get_mut(key) {
+                            return Some(value);
+                        }
+                    }
+                }
+                None
+            }
+            NodeChildrenRefMut::Leaf(children) => children
+                .into_iter()
+                .find(|(k, _)| k.borrow() == key)
+                .map(|(_, v)| v),
+        }
     }
 
     pub(crate) unsafe fn drop(&mut self) {

@@ -17,7 +17,7 @@ mod vector;
 use bounds::Bounded;
 use filter::SpatialFilter;
 use iter::FilterIter;
-use node::{Node, NodeOps};
+use node::{Node, NodeOps, NodeRef, NodeRefMut, RootNodeRefMut};
 use std::{borrow::Borrow, fmt::Debug, ops::Sub};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -55,16 +55,6 @@ where
     root: Node<N, D, Key, Value>,
 }
 
-impl<N, const D: usize, Key, Value> RTree<N, D, Key, Value>
-where
-    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-    Key: Bounded<N, D> + Eq,
-{
-    fn ops(&self) -> NodeOps {
-        NodeOps::new_ops(self.config.min_children, self.config.max_children)
-    }
-}
-
 impl<N, const D: usize, Key, Value> Debug for RTree<N, D, Key, Value>
 where
     N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64> + Debug,
@@ -72,10 +62,9 @@ where
     Value: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let ops = self.ops();
         f.debug_struct("RTree")
             .field("config", &self.config)
-            .field("root", unsafe { &ops.wrap_ref(&self.root, self.height) })
+            .field("root", &self.node_ref())
             .finish()
     }
 }
@@ -115,6 +104,25 @@ where
     N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
     Key: Bounded<N, D> + Eq,
 {
+    fn ops(&self) -> NodeOps {
+        NodeOps::new_ops(self.config.min_children, self.config.max_children)
+    }
+
+    fn root_ref_mut(&mut self) -> RootNodeRefMut<N, D, Key, Value> {
+        let ops = self.ops();
+        unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) }
+    }
+
+    fn node_ref_mut(&mut self) -> NodeRefMut<N, D, Key, Value> {
+        let ops = self.ops();
+        unsafe { ops.wrap_ref_mut(&mut self.root, self.height) }
+    }
+
+    fn node_ref(&self) -> NodeRef<N, D, Key, Value> {
+        let ops = self.ops();
+        unsafe { ops.wrap_ref(&self.root, self.height) }
+    }
+
     /// Returns a new empty R-tree.
     pub fn new(config: RTreeConfig) -> RTree<N, D, Key, Value> {
         let ops = NodeOps::new_ops(config.min_children, config.max_children);
@@ -181,9 +189,7 @@ where
         Key: Borrow<Q>,
         Q: Eq + Bounded<N, D> + ?Sized,
     {
-        let ops = self.ops();
-        let root = unsafe { ops.wrap_ref(&self.root, self.height) };
-        root.get(key)
+        self.node_ref().get(key)
     }
 
     /// Returns a mutable reference to the value associated with the given key,
@@ -193,14 +199,12 @@ where
     /// Borrowing is done using the `Borrow` trait, so the key can be of a
     /// different type than the key type of the R-tree. The Bounded trait must
     /// be equivalent for borrowed and owned keys, like Eq, Ord and Hash.
-    pub fn get_mut<'a, Q>(&'a mut self, key: &Q) -> Option<&'a mut Value>
+    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut Value>
     where
         Key: Borrow<Q>,
         Q: Eq + Bounded<N, D> + ?Sized,
     {
-        let ops = self.ops();
-        let root = unsafe { ops.wrap_ref_mut(&mut self.root, self.height) };
-        root.get_mut(key)
+        self.node_ref_mut().into_get_mut(key)
     }
 
     /// Removes the entry with the given key, returning the value of the entry
@@ -215,9 +219,7 @@ where
         Key: Borrow<Q>,
         Q: Eq + Bounded<N, D> + ?Sized,
     {
-        let ops = self.ops();
-        let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
-        root.remove(key)
+        self.root_ref_mut().remove(key)
     }
 
     /// Returns the number of entries in the R-tree.
@@ -231,9 +233,7 @@ where
     where
         N: Debug,
     {
-        let ops = self.ops();
-        let root = unsafe { ops.wrap_ref(&self.root, self.height) };
-        root.debug_assert_bvh();
+        self.node_ref().debug_assert_bvh();
     }
 
     fn debug_assert_eq(a: &Self, b: &Self)
@@ -244,20 +244,14 @@ where
     {
         assert_eq!(a.config, b.config);
         assert_eq!(a.height, b.height);
-        let a_ops = a.ops();
-        let b_ops = b.ops();
-        let a_root = unsafe { a_ops.wrap_ref(&a.root, a.height) };
-        let b_root = unsafe { b_ops.wrap_ref(&b.root, b.height) };
-        a_root.debug_assert_eq(&b_root);
+        a.node_ref().debug_assert_eq(&b.node_ref());
     }
 
     fn debug_assert_min_children(&self)
     where
         N: Debug,
     {
-        let ops = self.ops();
-        let root = unsafe { ops.wrap_ref(&self.root, self.height) };
-        root.debug_assert_min_children(true);
+        self.node_ref().debug_assert_min_children(true);
     }
 }
 
