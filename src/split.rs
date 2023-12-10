@@ -127,8 +127,7 @@ where
             group_1_len += 1;
         } else {
             bounds_2 = Bounds::containing(&bounds_2, &remaining[candidate_2.0].bounds());
-            // TODO: Can this be a swap_remove?
-            group_2.push(values.remove(group_1_len + candidate_2.0))
+            group_2.push(values.swap_remove(group_1_len + candidate_2.0))
         }
     }
 
