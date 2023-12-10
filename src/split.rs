@@ -138,11 +138,11 @@ where
 /// Splits values into two groups. When it returns, values contains the values of
 /// the first group while the other group is returned along with its minimum
 /// bounds.
-pub(crate) unsafe fn quadratic_n<'a, 'b, N, const D: usize, Value>(
+pub(crate) fn quadratic_n<'a, N, const D: usize, Value>(
     min_children: usize,
-    mut values: FCVecRefMut<'a, 'b, Value>,
+    mut values: FCVecRefMut<'a, Value>,
     overflow_value: Value,
-) -> (Bounds<N, D>, Bounds<N, D>, FCVecContainer<'a, Value>)
+) -> (Bounds<N, D>, Bounds<N, D>, FCVecContainer<Value>)
 where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
     Value: Bounded<N, D>,

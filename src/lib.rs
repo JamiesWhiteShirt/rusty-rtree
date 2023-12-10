@@ -88,7 +88,7 @@ where
     fn drop(&mut self) {
         let ops = self.ops();
         unsafe {
-            ops.drop(&mut self.root, self.height);
+            ops.wrap_ref_mut(&mut self.root, self.height).drop();
         }
     }
 }
@@ -193,7 +193,7 @@ where
     /// Borrowing is done using the `Borrow` trait, so the key can be of a
     /// different type than the key type of the R-tree. The Bounded trait must
     /// be equivalent for borrowed and owned keys, like Eq, Ord and Hash.
-    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut Value>
+    pub fn get_mut<'a, Q>(&'a mut self, key: &Q) -> Option<&'a mut Value>
     where
         Key: Borrow<Q>,
         Q: Eq + Bounded<N, D> + ?Sized,
@@ -248,7 +248,7 @@ where
         let b_ops = b.ops();
         let a_root = unsafe { a_ops.wrap_ref(&a.root, a.height) };
         let b_root = unsafe { b_ops.wrap_ref(&b.root, b.height) };
-        a_root.debug_assert_eq(b_root);
+        a_root.debug_assert_eq(&b_root);
     }
 
     fn debug_assert_min_children(&self)
