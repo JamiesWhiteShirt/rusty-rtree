@@ -1,4 +1,4 @@
-use std::{cmp::min, mem::ManuallyDrop, slice};
+use std::{borrow::Borrow, cmp::min, marker::PhantomData, mem::ManuallyDrop, slice};
 
 use crate::{bounds::Bounded, filter::SpatialFilter, node::Node};
 
@@ -163,30 +163,38 @@ impl<'a, N, const D: usize, Key, Value> Iterator for IterMut<'a, N, D, Key, Valu
     }
 }
 
-pub struct FilterIter<'a, N, const D: usize, Key, Value, Filter>
+pub struct FilterIter<'a, N, const D: usize, Key, Value, Q, Filter>
 where
-    Filter: SpatialFilter<N, D, Key>,
+    Key: Borrow<Q>,
+    Q: ?Sized,
+    Filter: SpatialFilter<N, D, Q>,
 {
     filter: Filter,
     // TODO: Use vector capacity instead of height?
     height: usize,
     stack: Vec<IterLevel<'a, N, D, Key, Value>>,
+
+    _phantom: PhantomData<Q>,
 }
 
-impl<'a, N, const D: usize, Key, Value, Filter> FilterIter<'a, N, D, Key, Value, Filter>
+impl<'a, N, const D: usize, Key, Value, Q, Filter> FilterIter<'a, N, D, Key, Value, Q, Filter>
 where
-    Filter: SpatialFilter<N, D, Key>,
+    Key: Borrow<Q>,
+    Q: ?Sized,
+    Filter: SpatialFilter<N, D, Q>,
 {
     pub(crate) unsafe fn new(
         height: usize,
         root: &'a Node<N, D, Key, Value>,
         filter: Filter,
-    ) -> FilterIter<'a, N, D, Key, Value, Filter> {
+    ) -> Self {
         if !filter.test_bounds(&root.bounds) {
             return FilterIter {
                 filter,
                 height,
                 stack: Vec::new(),
+
+                _phantom: PhantomData,
             };
         }
         let mut stack = Vec::with_capacity(height);
@@ -203,13 +211,18 @@ where
             filter,
             height,
             stack,
+
+            _phantom: PhantomData,
         }
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, Filter> Drop for FilterIter<'a, N, D, Key, Value, Filter>
+impl<'a, N, const D: usize, Key, Value, Q, Filter> Drop
+    for FilterIter<'a, N, D, Key, Value, Q, Filter>
 where
-    Filter: SpatialFilter<N, D, Key>,
+    Key: Borrow<Q>,
+    Q: ?Sized,
+    Filter: SpatialFilter<N, D, Q>,
 {
     fn drop(&mut self) {
         let stack_len = self.stack.len();
@@ -226,12 +239,13 @@ where
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, Filter> Iterator
-    for FilterIter<'a, N, D, Key, Value, Filter>
+impl<'a, N, const D: usize, Key, Value, Q, Filter> Iterator
+    for FilterIter<'a, N, D, Key, Value, Q, Filter>
 where
     N: Ord,
-    Key: Bounded<N, D>,
-    Filter: SpatialFilter<N, D, Key>,
+    Key: Bounded<N, D> + Borrow<Q>,
+    Q: ?Sized,
+    Filter: SpatialFilter<N, D, Q>,
 {
     type Item = (&'a Key, &'a Value);
 
@@ -241,7 +255,7 @@ where
             if level == 0 {
                 // Iterating over leaf node
                 if let Some(entry) = (*unsafe { &mut self.stack.last_mut().unwrap().leaf })
-                    .find(|(key, _)| self.filter.test_key(key))
+                    .find(|(key, _)| self.filter.test_key(key.borrow()))
                 {
                     return Some((&entry.0, &entry.1));
                 } else {
@@ -270,29 +284,37 @@ where
     }
 }
 
-pub struct FilterIterMut<'a, N, const D: usize, Key, Value, Filter>
+pub struct FilterIterMut<'a, N, const D: usize, Key, Value, Q, Filter>
 where
-    Filter: SpatialFilter<N, D, Key>,
+    Key: Borrow<Q>,
+    Q: ?Sized,
+    Filter: SpatialFilter<N, D, Q>,
 {
     filter: Filter,
     height: usize,
     stack: Vec<IterLevelMut<'a, N, D, Key, Value>>,
+
+    _phantom: PhantomData<Q>,
 }
 
-impl<'a, N, const D: usize, Key, Value, Filter> FilterIterMut<'a, N, D, Key, Value, Filter>
+impl<'a, N, const D: usize, Key, Value, Q, Filter> FilterIterMut<'a, N, D, Key, Value, Q, Filter>
 where
-    Filter: SpatialFilter<N, D, Key>,
+    Key: Borrow<Q>,
+    Q: ?Sized,
+    Filter: SpatialFilter<N, D, Q>,
 {
     pub(crate) unsafe fn new(
         height: usize,
         root: &'a mut Node<N, D, Key, Value>,
         filter: Filter,
-    ) -> FilterIterMut<'a, N, D, Key, Value, Filter> {
+    ) -> Self {
         if !filter.test_bounds(&root.bounds) {
             return FilterIterMut {
                 filter,
                 height,
                 stack: Vec::new(),
+
+                _phantom: PhantomData,
             };
         }
         let mut stack = Vec::with_capacity(height);
@@ -309,13 +331,18 @@ where
             filter,
             height,
             stack,
+
+            _phantom: PhantomData,
         }
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, Filter> Drop for FilterIterMut<'a, N, D, Key, Value, Filter>
+impl<'a, N, const D: usize, Key, Value, Q, Filter> Drop
+    for FilterIterMut<'a, N, D, Key, Value, Q, Filter>
 where
-    Filter: SpatialFilter<N, D, Key>,
+    Key: Borrow<Q>,
+    Q: ?Sized,
+    Filter: SpatialFilter<N, D, Q>,
 {
     fn drop(&mut self) {
         let stack_len = self.stack.len();
@@ -332,10 +359,12 @@ where
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, Filter> Iterator
-    for FilterIterMut<'a, N, D, Key, Value, Filter>
+impl<'a, N, const D: usize, Key, Value, Q, Filter> Iterator
+    for FilterIterMut<'a, N, D, Key, Value, Q, Filter>
 where
-    Filter: SpatialFilter<N, D, Key>,
+    Key: Borrow<Q>,
+    Q: ?Sized,
+    Filter: SpatialFilter<N, D, Q>,
 {
     type Item = (&'a Key, &'a mut Value);
 
@@ -345,7 +374,7 @@ where
             if level == 0 {
                 // Iterating over leaf node
                 if let Some(entry) = (*unsafe { &mut self.stack.last_mut().unwrap().leaf })
-                    .find(|(key, _)| self.filter.test_key(key))
+                    .find(|(key, _)| self.filter.test_key(key.borrow()))
                 {
                     return Some((&entry.0, &mut entry.1));
                 } else {

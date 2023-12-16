@@ -8,6 +8,7 @@ use array_init::array_init;
 
 use crate::{
     bounds::{Bounded, Bounds},
+    contains::Contains,
     geom::sphere::Sphere,
     intersects::Intersects,
 };
@@ -94,7 +95,7 @@ where
 
 impl<S: Ord, const D: usize> Intersects<Bounds<S, D>> for Vector<S, D> {
     fn intersects(&self, rhs: &Bounds<S, D>) -> bool {
-        rhs.contains_vector(self)
+        rhs.contains(self)
     }
 }
 

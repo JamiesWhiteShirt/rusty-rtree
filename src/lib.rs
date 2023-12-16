@@ -1,6 +1,7 @@
 #![feature(test)]
 
 pub mod bounds;
+pub mod contains;
 mod fc_vec;
 pub mod filter;
 pub mod geom;
@@ -143,17 +144,27 @@ where
 
     /// Returns an iterator over all entries in the R-tree using a spatial
     /// filter.
-    pub fn filter_iter<'a, Filter: SpatialFilter<N, D, Key>>(
+    pub fn filter_iter<'a, Q, Filter>(
         &'a self,
         filter: Filter,
-    ) -> FilterIter<'a, N, D, Key, Value, Filter> {
+    ) -> FilterIter<'a, N, D, Key, Value, Q, Filter>
+    where
+        Key: Borrow<Q>,
+        Q: ?Sized,
+        Filter: SpatialFilter<N, D, Q>,
+    {
         unsafe { FilterIter::new(self.height, &self.root, filter) }
     }
 
-    pub fn filter_iter_mut<'a, Filter: SpatialFilter<N, D, Key>>(
+    pub fn filter_iter_mut<'a, Q, Filter: SpatialFilter<N, D, Q>>(
         &'a mut self,
         filter: Filter,
-    ) -> iter::FilterIterMut<'a, N, D, Key, Value, Filter> {
+    ) -> iter::FilterIterMut<'a, N, D, Key, Value, Q, Filter>
+    where
+        Key: Borrow<Q>,
+        Q: ?Sized,
+        Filter: SpatialFilter<N, D, Q>,
+    {
         unsafe { iter::FilterIterMut::new(self.height, &mut self.root, filter) }
     }
 
@@ -280,7 +291,7 @@ mod tests {
     use noisy_float::types::n32;
     use noisy_float::types::N32;
 
-    use crate::filter::BoundedIntersectionFilter;
+    use crate::filter::BoundedIntersectsFilter;
     use crate::geom::line::Line;
     use crate::geom::sphere::Sphere;
     use crate::vector::Vector;
@@ -564,7 +575,8 @@ mod tests {
         bencher.iter(|| {
             let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
             let max = min + Vector([10, 10]);
-            for entry in tree.filter_iter(BoundedIntersectionFilter::new(Bounds { min, max })) {
+            for entry in tree.filter_iter(BoundedIntersectsFilter::new_bounded(Bounds { min, max }))
+            {
                 black_box(entry);
             }
         });
@@ -639,7 +651,7 @@ mod tests {
             max_children: 32,
         });
 
-        for (pos, info) in stars.filter_iter(BoundedIntersectionFilter::new(space)) {
+        for (pos, info) in stars.filter_iter(BoundedIntersectsFilter::new_bounded(space)) {
             if info.proper.len() > 0 {
                 println!("{}", info.proper);
             }

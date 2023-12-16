@@ -9,6 +9,7 @@ use std::{
 
 use crate::{
     bounds::{Bounded, Bounds},
+    contains::Contains,
     fc_vec::{self, FCVec, FCVecContainer, FCVecOps, FCVecRef, FCVecRefMut},
     intersects::Intersects,
     select, split,

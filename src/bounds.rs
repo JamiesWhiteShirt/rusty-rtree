@@ -6,7 +6,9 @@ use std::{
 use array_init::from_iter;
 use noisy_float::types::{n64, N64};
 
-use crate::{geom::line::Line, geom::ray::Ray, intersects::Intersects, vector::Vector};
+use crate::{
+    contains::Contains, geom::line::Line, geom::ray::Ray, intersects::Intersects, vector::Vector,
+};
 
 pub trait Bounded<N, const D: usize> {
     fn bounds(&self) -> Bounds<N, D>;
@@ -122,11 +124,11 @@ where
     }
 }
 
-impl<N, const D: usize> Bounds<N, D>
+impl<N, const D: usize> Contains<Bounds<N, D>> for Bounds<N, D>
 where
     N: Ord,
 {
-    pub fn contains(&self, rhs: &Self) -> bool {
+    fn contains(&self, rhs: &Self) -> bool {
         self.min
             .zip(&rhs.min)
             .all(|(lhs_min, rhs_min)| lhs_min <= rhs_min)
@@ -135,8 +137,13 @@ where
                 .zip(&rhs.max)
                 .all(|(lhs_max, rhs_max)| lhs_max >= rhs_max)
     }
+}
 
-    pub fn contains_vector(&self, point: &Vector<N, D>) -> bool {
+impl<N, const D: usize> Contains<Vector<N, D>> for Bounds<N, D>
+where
+    N: Ord,
+{
+    fn contains(&self, point: &Vector<N, D>) -> bool {
         self.intersects(point)
     }
 }
