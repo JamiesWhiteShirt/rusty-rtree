@@ -280,6 +280,7 @@ where
 #[cfg(test)]
 mod tests {
     use core::fmt;
+    use std::cell::RefCell;
     use std::error::Error;
     use std::fs::File;
     extern crate test;
@@ -291,6 +292,7 @@ mod tests {
     use noisy_float::types::n32;
     use noisy_float::types::N32;
 
+    use crate::bounds::Bounded;
     use crate::filter::BoundedIntersectsFilter;
     use crate::geom::line::Line;
     use crate::geom::sphere::Sphere;
@@ -663,5 +665,68 @@ mod tests {
         star_lines._debug_assert_min_children();
 
         Ok(())
+    }
+
+    #[test]
+    fn test_drop() {
+        struct CountedUnit<'a>(&'a RefCell<i32>);
+
+        impl<'a> CountedUnit<'a> {
+            fn new(counter: &'a RefCell<i32>) -> Self {
+                *counter.borrow_mut() += 1;
+                Self(counter)
+            }
+        }
+
+        impl<'a> Drop for CountedUnit<'a> {
+            fn drop(&mut self) {
+                *self.0.borrow_mut() -= 1;
+            }
+        }
+
+        struct Key<'a> {
+            i: u32,
+            _unit: CountedUnit<'a>,
+        }
+
+        impl<'a> Bounded<u32, 2> for Key<'a> {
+            fn bounds(&self) -> Bounds<u32, 2> {
+                Bounds {
+                    min: Vector([self.i, self.i]),
+                    max: Vector([self.i + 1, self.i + 1]),
+                }
+            }
+        }
+
+        impl<'a> PartialEq for Key<'a> {
+            fn eq(&self, other: &Self) -> bool {
+                self.i == other.i
+            }
+        }
+
+        impl<'a> Eq for Key<'a> {}
+
+        let value_count = RefCell::new(0);
+        let key_count = RefCell::new(0);
+        let mut tree = RTree::<u32, 2, Key, CountedUnit>::new(RTreeConfig {
+            max_children: 4,
+            min_children: 2,
+        });
+
+        for i in 0..1000 {
+            tree.insert(
+                Key {
+                    i,
+                    _unit: CountedUnit::new(&key_count),
+                },
+                CountedUnit::new(&value_count),
+            );
+            assert_eq!(key_count.borrow().clone(), (i + 1).try_into().unwrap());
+            assert_eq!(value_count.borrow().clone(), (i + 1).try_into().unwrap());
+        }
+
+        drop(tree);
+        assert_eq!(key_count.borrow().clone(), 0);
+        assert_eq!(value_count.borrow().clone(), 0);
     }
 }

@@ -177,6 +177,9 @@ impl FCVecOps {
     /// The given FCVec must have been created by this FCVecOps, and must not
     /// be already dropped.
     unsafe fn drop<T>(&self, data: &mut FCVec<T>) {
+        // Drop all items in the FCVec
+        while let Some(_) = self.pop(data) {}
+
         let layout = alloc::Layout::array::<T>(self.cap).unwrap();
         alloc::dealloc(data.buf.as_ptr() as *mut u8, layout);
     }
@@ -308,6 +311,23 @@ impl FCVecOps {
 
         let buf = data.buf.as_ptr();
         ptr::swap(buf.add(index_1), buf.add(index_2));
+    }
+
+    /// Pops the last value from the given FCVec and returns it.
+    /// Returns None if the FCVec is empty.
+    ///
+    /// # Safety
+    ///
+    /// The given FCVec must have been created by this FCVecOps and must not
+    /// have been dropped.
+    unsafe fn pop<T>(&self, data: &mut FCVec<T>) -> Option<T> {
+        if data.len == 0 {
+            None
+        } else {
+            data.len -= 1;
+            let buf = data.buf.as_ptr();
+            Some(ptr::read(buf.add(data.len)))
+        }
     }
 
     /// Returns a [safe container](FCVecContainer<T>) for the given FCVec.
@@ -496,6 +516,10 @@ impl<'a, T> FCVecRefMut<'a, T> {
         T: Clone,
     {
         unsafe { self.ops.clone(self.data) }
+    }
+
+    pub(crate) unsafe fn drop(self) {
+        self.ops.drop(self.data);
     }
 
     /// Takes the FCVec from the reference. The referenced FCVec becomes invalid
