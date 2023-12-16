@@ -1,7 +1,7 @@
 use std::{
     alloc,
     fmt::{self, Debug},
-    mem::{self, ManuallyDrop},
+    mem,
     ops::{Deref, DerefMut, Index, IndexMut},
     ptr::{self, NonNull},
     slice::{Iter, IterMut, SliceIndex},
@@ -30,26 +30,6 @@ impl<T> FCVec<T> {
 
     pub(crate) fn iter_mut(&mut self) -> IterMut<T> {
         self.deref_mut().iter_mut()
-    }
-
-    /// Removes the value at the given index in the given FCVec by swapping it
-    /// with the last value in the FCVec and returning the removed value.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the index is out of bounds.
-    pub(crate) fn swap_remove(&mut self, index: usize) -> T {
-        if index >= self.len {
-            panic!("Index out of bounds");
-        }
-
-        let buf = self.buf.as_ptr();
-        let child = unsafe { ptr::read(buf.add(index)) };
-        unsafe {
-            ptr::copy(buf.add(self.len - 1), buf.add(index), 1);
-        }
-        self.len -= 1;
-        child
     }
 }
 
@@ -144,19 +124,8 @@ impl FCVecOps {
         FCVecOps { cap }
     }
 
-    pub(crate) fn cap(&self) -> usize {
-        self.cap
-    }
-
-    /// Allocates an empty [FCVec<T>] with the capacity and type specified by
-    /// this FCVecOps. The returned FCVec is safe to use with the FCVecOps that
-    /// created it.
-    ///
-    /// # Safety
-    ///
-    /// The returned FCVec can only be used with the same FCVecOps that created
-    /// it, and its contents must be dropped with [FCVecOps<T>::drop] before the
-    /// FCVec is disposed of.
+    /// Allocates an empty [FCVec<T>] with the capacity specified by this
+    /// FCVecOps in a safe [FCVecContainer<T>].
     pub(crate) fn new<T>(&self) -> FCVecContainer<T> {
         let layout = alloc::Layout::array::<T>(self.cap).unwrap();
         let buf = match NonNull::new(unsafe { alloc::alloc(layout) } as *mut T) {
@@ -166,167 +135,6 @@ impl FCVecOps {
         FCVecContainer {
             data: FCVec { buf, len: 0 },
             ops: *self,
-        }
-    }
-
-    /// Drops the contents of the given [FCVec<T>]. After this, the FCVec is
-    /// invalid and must not be used, but is safe to dispose of.
-    ///
-    /// # Safety
-    ///
-    /// The given FCVec must have been created by this FCVecOps, and must not
-    /// be already dropped.
-    unsafe fn drop<T>(&self, data: &mut FCVec<T>) {
-        // Drop all items in the FCVec
-        while let Some(_) = self.pop(data) {}
-
-        let layout = alloc::Layout::array::<T>(self.cap).unwrap();
-        alloc::dealloc(data.buf.as_ptr() as *mut u8, layout);
-    }
-
-    /// Appends the given value to the end of the given FCVec.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the FCVec is full.
-    ///
-    /// # Safety
-    ///
-    /// The given FCVec must have been created by this FCVecOps and must not
-    /// have been dropped.
-    unsafe fn push<T>(&self, data: &mut FCVec<T>, value: T) {
-        if data.len == self.cap {
-            panic!("Vector is full");
-        }
-
-        let buf = data.buf.as_ptr();
-        ptr::write(buf.add(data.len), value);
-        data.len += 1;
-    }
-
-    /// Appends the given value to the end of the given FCVec, returning the
-    /// given value if the FCVec is full.
-    ///
-    /// # Safety
-    ///
-    /// The given FCVec must have been created by this FCVecOps and must not
-    /// have been dropped.
-    unsafe fn try_push<T>(&self, data: &mut FCVec<T>, value: T) -> Option<T> {
-        if data.len == self.cap {
-            Some(value)
-        } else {
-            let buf = data.buf.as_ptr();
-            ptr::write(buf.add(data.len), value);
-            data.len += 1;
-            None
-        }
-    }
-
-    /// Inserts the given value at the given index in the given FCVec.
-    /// The value at the given index and all subsequent values are shifted
-    /// right by one.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the index is out of bounds or if the FCVec is full.
-    ///
-    /// # Safety
-    ///
-    /// The given FCVec must have been created by this FCVecOps and must not
-    /// have been dropped.
-    unsafe fn insert<T>(&self, data: &mut FCVec<T>, index: usize, value: T) {
-        if index > data.len {
-            panic!("Index out of bounds");
-        }
-        if data.len == self.cap {
-            panic!("Vector is full");
-        }
-
-        let buf = data.buf.as_ptr();
-        ptr::copy(buf.add(index), buf.add(index + 1), data.len - index);
-        ptr::write(buf.add(index), value);
-        data.len += 1;
-    }
-
-    /// Removes the value at the given index in the given FCVec and returns it.
-    /// All subsequent values are shifted left by one.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the index is out of bounds.
-    ///
-    /// # Safety
-    ///
-    /// The given FCVec must have been created by this FCVecOps and must not
-    /// have been dropped.
-    unsafe fn remove<T>(&self, data: &mut FCVec<T>, index: usize) -> T {
-        if index >= data.len {
-            panic!("Index out of bounds");
-        }
-
-        let buf = data.buf.as_ptr();
-        let removed = ptr::read(buf.add(index));
-        ptr::copy(buf.add(index + 1), buf.add(index), data.len - index - 1);
-        data.len -= 1;
-        removed
-    }
-
-    /// Removes the value at the given index in the given FCVec by swapping it
-    /// with the last value in the FCVec and returning the removed value.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the index is out of bounds.
-    ///
-    /// # Safety
-    ///
-    /// The given FCVec must have been created by this FCVecOps and must not
-    /// have been dropped.
-    unsafe fn swap_remove<T>(&self, data: &mut FCVec<T>, index: usize) -> T {
-        if index >= data.len {
-            panic!("Index out of bounds");
-        }
-
-        let buf = data.buf.as_ptr();
-        let child = ptr::read(buf.add(index));
-        ptr::copy(buf.add(data.len - 1), buf.add(index), 1);
-        data.len -= 1;
-        child
-    }
-
-    /// Swaps the values at the given indices in the given FCVec.
-    ///
-    /// # Panics
-    ///
-    /// Panics if either index is out of bounds.
-    ///
-    /// # Safety
-    ///
-    /// The given FCVec must have been created by this FCVecOps and must not
-    /// have been dropped.
-    unsafe fn swap<T>(&self, data: &mut FCVec<T>, index_1: usize, index_2: usize) {
-        if index_1 >= data.len || index_2 >= data.len {
-            panic!("Index out of bounds");
-        }
-
-        let buf = data.buf.as_ptr();
-        ptr::swap(buf.add(index_1), buf.add(index_2));
-    }
-
-    /// Pops the last value from the given FCVec and returns it.
-    /// Returns None if the FCVec is empty.
-    ///
-    /// # Safety
-    ///
-    /// The given FCVec must have been created by this FCVecOps and must not
-    /// have been dropped.
-    unsafe fn pop<T>(&self, data: &mut FCVec<T>) -> Option<T> {
-        if data.len == 0 {
-            None
-        } else {
-            data.len -= 1;
-            let buf = data.buf.as_ptr();
-            Some(ptr::read(buf.add(data.len)))
         }
     }
 
@@ -368,39 +176,6 @@ impl FCVecOps {
             data: vec,
         }
     }
-
-    /// Clones the given FCVec. The returned FCVec is safe to use with the
-    /// FCVecOps that created it.
-    ///
-    /// # Safety
-    ///
-    /// The given FCVec must have been created by this FCVecOps and must not
-    /// have been dropped.
-    ///
-    /// The returned FCVec can only be used with the same FCVecOps that created
-    /// it, and its contents must be dropped with [FCVecOps<T>::drop] before the
-    /// FCVec is disposed of.
-    unsafe fn clone<T>(&self, vec: &FCVec<T>) -> FCVecContainer<T>
-    where
-        T: Clone,
-    {
-        let mut new = self.new();
-        for value in vec.iter() {
-            new.push(value.clone());
-        }
-        new
-    }
-
-    unsafe fn into_iter<T>(&self, vec: FCVec<T>) -> IntoIter<T> {
-        let start = vec.buf.as_ptr();
-        let end = start.add(vec.len);
-        IntoIter {
-            buf: vec.buf,
-            cap: self.cap,
-            start,
-            end,
-        }
-    }
 }
 
 pub(crate) struct FCVecRef<'a, T> {
@@ -413,15 +188,16 @@ impl<'a, T> FCVecRef<'a, T> {
         self.data.len()
     }
 
-    pub(crate) fn iter(&self) -> Iter<T> {
-        self.data.iter()
-    }
-
+    /// Returns a copy of the referenced FCVec in a new FCVecContainer.
     pub(crate) fn clone(&self) -> FCVecContainer<T>
     where
         T: Clone,
     {
-        unsafe { self.ops.clone(self.data) }
+        let mut new = self.ops.new();
+        for value in self.data {
+            new.push(value.clone());
+        }
+        new
     }
 }
 
@@ -487,49 +263,133 @@ impl<'a, T> FCVecRefMut<'a, T> {
         self.data.iter_mut()
     }
 
-    pub(crate) fn swap_remove(&mut self, index: usize) -> T {
-        unsafe { self.ops.swap_remove(self.data, index) }
-    }
-
+    /// Appends the given value to the end of the referenced FCVec.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the FCVec is full.
     pub(crate) fn push(&mut self, value: T) {
-        unsafe { self.ops.push(self.data, value) }
+        if self.data.len == self.ops.cap {
+            panic!("Vector is full");
+        }
+
+        let buf = self.data.buf.as_ptr();
+        unsafe { ptr::write(buf.add(self.data.len), value) };
+        self.data.len += 1;
     }
 
+    /// Appends the given value to the end of the referenced FCVec, returning
+    /// the given value if the FCVec is full.
     pub(crate) fn try_push(&mut self, value: T) -> Option<T> {
-        unsafe { self.ops.try_push(self.data, value) }
+        if self.data.len == self.ops.cap {
+            Some(value)
+        } else {
+            let buf = self.data.buf.as_ptr();
+            unsafe { ptr::write(buf.add(self.data.len), value) };
+            self.data.len += 1;
+            None
+        }
     }
 
+    /// Inserts the given value at the given index in the referenced FCVec.
+    /// The value at the given index and all subsequent values are shifted
+    /// right by one.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the index is out of bounds or if the FCVec is full.
     pub(crate) fn insert(&mut self, index: usize, value: T) {
-        unsafe { self.ops.insert(self.data, index, value) }
+        if index > self.data.len {
+            panic!("Index out of bounds");
+        }
+        if self.data.len == self.ops.cap {
+            panic!("Vector is full");
+        }
+
+        let buf = self.data.buf.as_ptr();
+        unsafe {
+            ptr::copy(buf.add(index), buf.add(index + 1), self.data.len - index);
+            ptr::write(buf.add(index), value);
+        }
+        self.data.len += 1;
     }
 
+    /// Removes the value at the given index in the referenced FCVec and returns
+    /// it. All subsequent values are shifted left by one.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the index is out of bounds.
     pub(crate) fn remove(&mut self, index: usize) -> T {
-        unsafe { self.ops.remove(self.data, index) }
+        if index >= self.data.len {
+            panic!("Index out of bounds");
+        }
+
+        let buf = self.data.buf.as_ptr();
+        let removed = unsafe { ptr::read(buf.add(index)) };
+        unsafe {
+            ptr::copy(
+                buf.add(index + 1),
+                buf.add(index),
+                self.data.len - index - 1,
+            )
+        };
+        self.data.len -= 1;
+        removed
     }
 
+    /// Removes the value at the given index in the referenced FCVec by swapping
+    /// it with the last value in the FCVec and returning the removed value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the index is out of bounds.
+    pub(crate) fn swap_remove(&mut self, index: usize) -> T {
+        if index >= self.data.len {
+            panic!("Index out of bounds");
+        }
+
+        let buf = self.data.buf.as_ptr();
+        let child = unsafe { ptr::read(buf.add(index)) };
+        unsafe { ptr::copy(buf.add(self.data.len - 1), buf.add(index), 1) };
+        self.data.len -= 1;
+        child
+    }
+
+    /// Swaps the values at the given indices in the referenced FCVec.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either index is out of bounds.
     pub(crate) fn swap(&mut self, index_1: usize, index_2: usize) {
-        unsafe { self.ops.swap(self.data, index_1, index_2) }
+        if index_1 >= self.data.len || index_2 >= self.data.len {
+            panic!("Index out of bounds");
+        }
+
+        let buf = self.data.buf.as_ptr();
+        unsafe { ptr::swap(buf.add(index_1), buf.add(index_2)) };
     }
 
-    pub(crate) fn clone(&self) -> FCVecContainer<T>
-    where
-        T: Clone,
-    {
-        unsafe { self.ops.clone(self.data) }
+    /// Pops the last value from the referenced FCVec and returns it. Returns
+    /// None if the FCVec is empty.
+    fn pop(&mut self) -> Option<T> {
+        if self.data.len == 0 {
+            None
+        } else {
+            self.data.len -= 1;
+            let buf = self.data.buf.as_ptr();
+            Some(unsafe { ptr::read(buf.add(self.data.len)) })
+        }
     }
 
-    pub(crate) unsafe fn drop(self) {
-        self.ops.drop(self.data);
-    }
+    /// Drops the contents of the referenced [FCVec<T>]. After this, the FCVec
+    /// is invalid and must not be used, but is safe to dispose of.
+    pub(crate) unsafe fn drop(mut self) {
+        // Drop all items in the FCVec
+        while let Some(_) = self.pop() {}
 
-    /// Takes the FCVec from the reference. The referenced FCVec becomes invalid
-    /// and must not be used.
-    ///
-    /// # Safety
-    ///
-    /// The referenced FCVec must not be used after this function is called.
-    pub(crate) unsafe fn take(self) -> FCVecContainer<T> {
-        self.ops.wrap(ptr::read(self.data))
+        let layout = alloc::Layout::array::<T>(self.ops.cap).unwrap();
+        alloc::dealloc(self.data.buf.as_ptr() as *mut u8, layout);
     }
 }
 
@@ -608,7 +468,7 @@ where
 impl<T> Drop for FCVecContainer<T> {
     fn drop(&mut self) {
         unsafe {
-            self.ops.drop(&mut self.data);
+            self.r#ref_mut().drop();
         }
     }
 }
@@ -632,14 +492,17 @@ impl<T> IntoIterator for FCVecContainer<T> {
     type IntoIter = IntoIter<T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        let from = ManuallyDrop::new(self);
-        let from = &*from as *const FCVecContainer<T>;
+        let data = unsafe { ptr::read(&self.data) };
+        let ops = unsafe { ptr::read(&self.ops) };
+        mem::forget(self);
 
-        unsafe {
-            let ops = ptr::read(&(*from).ops);
-            let data = ptr::read(&(*from).data);
-
-            ops.into_iter(data)
+        let start = data.buf.as_ptr();
+        let end = unsafe { start.add(data.len) };
+        IntoIter {
+            buf: data.buf,
+            cap: ops.cap,
+            start,
+            end,
         }
     }
 }
@@ -663,13 +526,13 @@ impl<'a, T> IntoIterator for &'a mut FCVecContainer<T> {
 }
 
 impl<T> FCVecContainer<T> {
-    /// Removes the FCVec from the container and returns it.
+    /// Removes the FCVec from its container and returns it.
     ///
     /// # Safety
     ///
-    /// The FCVec must be later wrapped with [FCVecOps<T>::wrap] in order to
-    /// be used safely. It must also be dropped with [FCVecOps<T>::drop] before
-    /// it is disposed of.
+    /// The FCVec must be later wrapped using the container's [`FCVecOps`] in
+    /// order to be used safely. It must also either be wrapped in an other
+    /// container or be dropped with [`FCVecRef<T>::drop`].
     pub(crate) unsafe fn unwrap(self) -> FCVec<T> {
         let data = ptr::read(&self.data);
         mem::forget(self);
@@ -680,36 +543,16 @@ impl<T> FCVecContainer<T> {
         self.data.len()
     }
 
-    pub(crate) fn iter(&self) -> Iter<T> {
-        self.data.iter()
+    pub(crate) fn r#ref(&self) -> FCVecRef<T> {
+        unsafe { self.ops.wrap_ref(&self.data) }
     }
 
-    pub(crate) fn iter_mut(&mut self) -> IterMut<T> {
-        self.data.iter_mut()
-    }
-
-    pub(crate) fn swap_remove(&mut self, index: usize) -> T {
-        unsafe { self.ops.swap_remove(&mut self.data, index) }
+    pub(crate) fn r#ref_mut(&mut self) -> FCVecRefMut<T> {
+        unsafe { self.ops.wrap_ref_mut(&mut self.data) }
     }
 
     pub(crate) fn push(&mut self, value: T) {
-        unsafe { self.ops.push(&mut self.data, value) }
-    }
-
-    pub(crate) fn try_push(&mut self, value: T) -> Option<T> {
-        unsafe { self.ops.try_push(&mut self.data, value) }
-    }
-
-    pub(crate) fn insert(&mut self, index: usize, value: T) {
-        unsafe { self.ops.insert(&mut self.data, index, value) }
-    }
-
-    pub(crate) fn remove(&mut self, index: usize) -> T {
-        unsafe { self.ops.remove(&mut self.data, index) }
-    }
-
-    pub(crate) fn swap(&mut self, index_1: usize, index_2: usize) {
-        unsafe { self.ops.swap(&mut self.data, index_1, index_2) }
+        self.r#ref_mut().push(value);
     }
 }
 

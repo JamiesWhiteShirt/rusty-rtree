@@ -1052,7 +1052,7 @@ struct InnerNodeChildrenRefMut<'a, N, const D: usize, Key, Value> {
 
 impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, N, D, Key, Value> {
     unsafe fn drop(mut self) {
-        for mut child in self.iter_mut() {
+        for child in self.iter_mut() {
             child.drop();
         }
     }
@@ -1069,10 +1069,9 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, N, D, Key, V
     }
 
     fn swap_remove(&mut self, index: usize) -> NodeContainer<N, D, Key, Value> {
-        unsafe {
-            self.ops
-                .wrap(self.children.swap_remove(index), self.level.get() - 1)
-        }
+        let mut children = unsafe { self.ops.children.wrap_ref_mut(&mut self.children) };
+        let child = children.swap_remove(index);
+        unsafe { self.ops.wrap(child, self.level.get() - 1) }
     }
 
     fn iter<'b>(&'b self) -> InnerNodeChildrenIter<'b, N, D, Key, Value> {
