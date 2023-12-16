@@ -400,7 +400,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
     fn remove<Q>(
         &mut self,
         key: &Q,
-        reinsert_entries: &mut [Option<NodeChildren<N, D, Key, Value>>],
+        on_underfull: &mut impl FnMut(NodeChildrenContainer<N, D, Key, Value>),
     ) -> Option<Value>
     where
         N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
@@ -415,13 +415,11 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                     i -= 1;
                     let mut child = children.at_mut(i);
                     if child.bounds().intersects(&key.bounds()) {
-                        let value = child.remove(key, reinsert_entries);
+                        let value = child.remove(key, on_underfull);
                         if let Some(value) = value {
                             if child.shallow_len() < min_children {
                                 let child = children.swap_remove(i);
-                                let level = child.level;
-                                reinsert_entries[level] =
-                                    Some(unsafe { child.children().unwrap() });
+                                on_underfull(child.children());
                             }
 
                             self.node.bounds =
@@ -632,7 +630,10 @@ impl<'a, N, const D: usize, Key, Value> RootNodeRefMut<'a, N, D, Key, Value> {
     {
         let mut reinsert_entries: Box<[Option<NodeChildren<N, D, Key, Value>>]> =
             std::iter::repeat_with(|| None).take(*self.height).collect();
-        if let Some(value) = self.node_ref_mut().remove(key, &mut reinsert_entries) {
+        if let Some(value) = self.node_ref_mut().remove(key, &mut |children| {
+            let level = children.level();
+            reinsert_entries[level] = Some(unsafe { children.unwrap() });
+        }) {
             self.try_unbranch();
 
             for (level, entries) in reinsert_entries.iter_mut().enumerate() {
@@ -1164,28 +1165,6 @@ enum NodeChildrenRefMut<'a, N, const D: usize, Key, Value> {
     Leaf(FCVecRefMut<'a, (Key, Value)>),
 }
 
-impl<'a, N, const D: usize, Key, Value> NodeChildrenRefMut<'a, N, D, Key, Value> {
-    /// Takes the node children from the reference. The referenced node children
-    /// become invalid and must not be used.
-    ///
-    /// # Safety
-    ///
-    /// The referenced node children must not be used after this function is
-    /// called.
-    unsafe fn take(self) -> NodeChildrenContainer<N, D, Key, Value> {
-        match self {
-            NodeChildrenRefMut::Inner(children) => {
-                NodeChildrenContainer::Inner(InnerNodeChildrenContainer {
-                    ops: children.ops,
-                    level: children.level,
-                    children: ptr::read(children.children),
-                })
-            }
-            NodeChildrenRefMut::Leaf(children) => NodeChildrenContainer::Leaf(children.take()),
-        }
-    }
-}
-
 struct InnerNodeChildrenContainer<N, const D: usize, Key, Value> {
     ops: NodeOps,
     level: NonZeroUsize,
@@ -1262,6 +1241,13 @@ enum NodeChildrenContainer<N, const D: usize, Key, Value> {
 }
 
 impl<N, const D: usize, Key, Value> NodeChildrenContainer<N, D, Key, Value> {
+    fn level(&self) -> usize {
+        match self {
+            NodeChildrenContainer::Inner(children) => children.level.get(),
+            NodeChildrenContainer::Leaf(_) => 0,
+        }
+    }
+
     unsafe fn unwrap(self) -> NodeChildren<N, D, Key, Value> {
         match self {
             NodeChildrenContainer::Inner(children) => NodeChildren {
