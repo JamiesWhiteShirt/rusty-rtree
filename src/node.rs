@@ -496,9 +496,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
     pub(crate) unsafe fn drop(mut self) {
         match self.children_mut() {
             NodeChildrenRefMut::Inner(children) => {
-                for child in children {
-                    child.drop();
-                }
+                children.drop();
             }
             NodeChildrenRefMut::Leaf(children) => {
                 children.drop();
@@ -1055,6 +1053,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, N, D, Key, V
         for child in self.iter_mut() {
             child.drop();
         }
+        self.ops.children.wrap_ref_mut(&mut self.children).drop();
     }
 
     fn len(&self) -> usize {
