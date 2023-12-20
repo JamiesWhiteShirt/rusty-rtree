@@ -526,15 +526,11 @@ impl<'a, T> IntoIterator for &'a mut FCVecContainer<T> {
 }
 
 impl<T> FCVecContainer<T> {
-    /// Removes the FCVec from its container and returns it.
-    ///
-    /// # Safety
-    ///
-    /// The FCVec must be later wrapped using the container's [`FCVecOps`] in
-    /// order to be used safely. It must also either be wrapped in an other
-    /// container or be dropped with [`FCVecRef<T>::drop`].
-    pub(crate) unsafe fn unwrap(self) -> FCVec<T> {
-        let data = ptr::read(&self.data);
+    /// Unwraps the FCVec from the container without dropping it. The returned
+    /// FCVec can only be wrapped using the same [`FCVecOps`] that created the
+    /// container.
+    pub(crate) fn unwrap(self) -> FCVec<T> {
+        let data = unsafe { ptr::read(&self.data) };
         mem::forget(self);
         data
     }

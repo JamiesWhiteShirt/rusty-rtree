@@ -94,7 +94,7 @@ where
         let root = unsafe { ops.wrap_ref(&self.root, self.height) }.clone();
         RTree {
             height: self.height,
-            root: unsafe { root.unwrap() },
+            root: root.unwrap(),
             config: self.config,
         }
     }
@@ -129,7 +129,7 @@ where
         let ops = NodeOps::new_ops(config.min_children, config.max_children);
         return RTree {
             height: 0,
-            root: unsafe { ops.empty_leaf().unwrap() },
+            root: ops.empty_leaf().unwrap(),
             config,
         };
     }

@@ -58,12 +58,58 @@ impl<N, const D: usize, Key, Value> NodeChildren<N, D, Key, Value> {
     }
 }
 
+/// A Node is either an inner node or a leaf node. The children of an inner node
+/// is a vector of Nodes, while the children of a leaf node is a vector of
+/// key-value pairs. The bounds of a Node is the union of the bounds of its
+/// children.
+///
+/// A Node is not self-describing in the sense that it has no explicit level or
+/// capacity. These must be provided on creation and provided consistently when
+/// manipulating the node. This is done to avoid storing data that is constant
+/// for sets of nodes, or data that is easily computed from other data.
+///
+/// Being non-self-describing makes Node a fundamentally unsafe type, but it may
+/// be used safely by wrapping it in a [`NodeContainer`], a [`NodeRef`] or a
+/// [`NodeRefMut`] using the [`NodeOps`] that created it. Wrapping the node
+/// requires knowledge of the implicit level of the node.
+///
+/// Node does not implement [`Drop`], but to avoid leaks it must be dropped
+/// either by wrapping it in a [`NodeContainer`] or by wrapping it in a
+/// [`NodeRefMut`] and calling [`NodeRefMut::drop`].
+///
+/// # Implicit parameters
+///
+/// A Node has an implicit level which is provided as the `_level` parameter to
+/// the constructor. It is implicit because it is not stored in the node and
+/// must be tracked separately. The level describes the node's position in the
+/// tree. A node with level zero is a leaf node, while a node with a positive
+/// level `l` is an inner node containing nodes with level `l - 1`.
+///
+/// A Node also has a capacity determined by the [`NodeOps`] used to create it.
+/// Like the level, the capacity is not stored in the Node, and is instead
+/// maintained by consistently using the same [`NodeOps`] to manipulate the
+/// Node.
 pub(crate) struct Node<N, const D: usize, Key, Value> {
     pub(crate) bounds: Bounds<N, D>,
     children: NodeChildren<N, D, Key, Value>,
 }
 
 impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
+    /// Creates a new node. The bounds must be the union of the bounds of the
+    /// children. It is a logic error to create a node with bounds that are not
+    /// the union of the bounds of the children.
+    ///
+    /// # Safety
+    ///
+    /// `_level` describes the implicit level of the node. Though it is not
+    /// used to produce the node, it is provided as a parameter for debugging
+    /// purposes. It is the caller's responsibility to ensure that same level is
+    /// provided for operations on the node that depend on the level.
+    ///
+    /// `children` must be set appropriately based on `_level`. If `_level` = 0,
+    /// `children` must be leaf children. If `_level` > 0, `children` must be
+    /// inner children containing nodes whose level is `_level - 1`. It is
+    /// undefined behavior to violate these conditions.
     unsafe fn new(
         bounds: Bounds<N, D>,
         children: NodeChildren<N, D, Key, Value>,
@@ -72,18 +118,48 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
         Node { bounds, children }
     }
 
+    /// Returns the children of the node as an inner node, which is a vector of
+    /// nodes. For a node with implicit level `l`, the level of the children is
+    /// `l - 1`.
+    ///
+    /// # Safety
+    ///
+    /// The node must be an inner node (a node with level > 0). It is undefined
+    /// behavior to call this method on a leaf node.
     pub(crate) unsafe fn inner_children(&self) -> &FCVec<Node<N, D, Key, Value>> {
         &self.children.inner
     }
 
+    /// Returns the children of the node as an inner node, which is a vector of
+    /// nodes. For a node with implicit level `l`, the level of the children is
+    /// `l - 1`.
+    ///
+    /// # Safety
+    ///
+    /// The node must be an inner node (a node with level > 0). It is undefined
+    /// behavior to call this method on a leaf node.
     pub(crate) unsafe fn inner_children_mut(&mut self) -> &mut FCVec<Node<N, D, Key, Value>> {
         &mut self.children.inner
     }
 
+    /// Returns the children of the node as a leaf node, which is a vector of
+    /// key-value pairs.
+    ///
+    /// # Safety
+    ///
+    /// The node must be a leaf node (a node with level = 0). It is undefined
+    /// behavior to call this method on an inner node.
     pub(crate) unsafe fn leaf_children(&self) -> &FCVec<(Key, Value)> {
         &self.children.leaf
     }
 
+    /// Returns the children of the node as a leaf node, which is a vector of
+    /// key-value pairs.
+    ///
+    /// # Safety
+    ///
+    /// The node must be a leaf node (a node with level = 0). It is undefined
+    /// behavior to call this method on an inner node.
     pub(crate) unsafe fn leaf_children_mut(&mut self) -> &mut FCVec<(Key, Value)> {
         &mut self.children.leaf
     }
@@ -142,6 +218,20 @@ impl NodeOps {
         }
     }
 
+    /// Wraps a node with a provided level in a safe container that takes
+    /// ownership of the node. The provided node must have been allocated by the
+    /// same FCVecOps and must not have been dropped.
+    ///
+    /// # Safety
+    ///
+    /// The provided `level` must match the implicit level of the node. It is
+    /// undefined behavior to call this method with a level that does not match
+    /// the implicit level of the node.
+    ///
+    /// The method should not be called with a node that has been allocated by a
+    /// different FCVecOps. It is undefined behavior to do so if the FCVecOps
+    /// have different `max_children` values, and it is a logic error to do so
+    /// the FCVecOps have different `min_children` values.
     unsafe fn wrap<N, const D: usize, Key, Value>(
         &self,
         node: Node<N, D, Key, Value>,
@@ -154,6 +244,21 @@ impl NodeOps {
         }
     }
 
+    /// Borrows a node with a provided level in a safe reference. The provided
+    /// node must have been allocated by the same FCVecOps and must not have
+    /// been dropped.
+    ///
+    /// # Safety
+    ///
+    /// The provided `level` must match the implicit level of the node. It is
+    /// undefined behavior to use the returned reference if this condition is
+    /// violated.
+    ///
+    /// The return value must not be used if this is called with a node that has
+    /// been allocated by a different FCVecOps. It is undefined behavior to do
+    /// so if the FCVecOps have different `max_children` values, and it is a
+    /// logic error to do so if the FCVecOps have different `min_children`
+    /// values.
     pub(crate) unsafe fn wrap_ref<'a, N, const D: usize, Key, Value>(
         &self,
         node: &'a Node<N, D, Key, Value>,
@@ -166,6 +271,21 @@ impl NodeOps {
         }
     }
 
+    /// Mutably borrows a node with a provided level in a safe reference. The
+    /// provided `node` must have been allocated by the same FCVecOps and must
+    /// not have been dropped.
+    ///
+    /// # Safety
+    ///
+    /// The provided `level` must match the implicit level of the node. It is
+    /// undefined behavior to use the returned reference if this condition is
+    /// violated.
+    ///
+    /// The return value must not be used if this is called with a node that has
+    /// been allocated by a different FCVecOps. It is undefined behavior to do
+    /// so if the FCVecOps have different `max_children` values, and it is a
+    /// logic error to do so if the FCVecOps have different `min_children`
+    /// values.
     pub(crate) unsafe fn wrap_ref_mut<'a, N, const D: usize, Key, Value>(
         &self,
         node: &'a mut Node<N, D, Key, Value>,
@@ -178,6 +298,28 @@ impl NodeOps {
         }
     }
 
+    /// Mutably borrows the root node and height of a tree in a safe reference.
+    /// This is a special case of `wrap_ref_mut` that can be used for operations
+    /// that can change the height of the tree. The provided `node` must have
+    /// been allocated by the same FCVecOps and must not have been dropped.
+    ///
+    /// The provided height is equal to the level of the root node. If the
+    /// returned reference is used for operations that can change the height of
+    /// the tree, the provided `height` is updated to match the new height, and
+    /// the root node is modified such that its implicit level matches the new
+    /// height.
+    ///
+    /// # Safety
+    ///
+    /// The provided `height` must match the implicit height of the tree rooted
+    /// at `node`. It is undefined behavior to use the returned reference if
+    /// this condition is violated.
+    ///
+    /// The return value must not be used if this is called with a node that has
+    /// been allocated by a different FCVecOps. It is undefined behavior to do
+    /// so if the FCVecOps have different `max_children` values, and it is a
+    /// logic error to do so if the FCVecOps have different `min_children`
+    /// values.
     pub(crate) unsafe fn wrap_root_ref_mut<'a, N, const D: usize, Key, Value>(
         &self,
         node: &'a mut Node<N, D, Key, Value>,
@@ -190,6 +332,23 @@ impl NodeOps {
         }
     }
 
+    /// Wraps the children of a node at a specified level in a safe container
+    /// that takes ownership of the children, which will drop the children
+    /// when dropped. The provided `children` must have been allocated by the
+    /// same `FCVecOps` and must not have been dropped.
+    ///
+    /// # Safety
+    ///
+    /// The provided `level` must match the implicit level of the node that
+    /// contained the children. It is undefined behavior to call this method
+    /// with a level that does not match the implicit level of the node that
+    /// contained the children.
+    ///
+    /// The method should not be called with children that were contained by a
+    /// node that has been allocated by a different FCVecOps. It is undefined
+    /// behavior to do so if the FCVecOps have different `max_children`
+    /// values, and it is a logic error to do so if the FCVecOps have
+    /// different `min_children` values.
     unsafe fn wrap_children<N, const D: usize, Key, Value>(
         &self,
         children: NodeChildren<N, D, Key, Value>,
@@ -493,6 +652,14 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
         }
     }
 
+    /// Drops the node and all of its children. After calling this method, the
+    /// node and references to it are invalid and must not be used.
+    ///
+    /// # Safety
+    ///
+    /// It is undefined behavior to drop a node that has already been dropped.
+    ///
+    /// It is undefined behavior to use a node after dropping it.
     pub(crate) unsafe fn drop(mut self) {
         match self.children_mut() {
             NodeChildrenRefMut::Inner(children) => {
@@ -616,8 +783,8 @@ impl<'a, N, const D: usize, Key, Value> RootNodeRefMut<'a, N, D, Key, Value> {
         if let Some(new_root) = new_root {
             unsafe {
                 self.node_ref_mut().drop();
-                *self.node = new_root.unwrap();
             }
+            *self.node = new_root.unwrap();
             *self.height -= 1;
         }
     }
@@ -632,7 +799,7 @@ impl<'a, N, const D: usize, Key, Value> RootNodeRefMut<'a, N, D, Key, Value> {
             std::iter::repeat_with(|| None).take(*self.height).collect();
         if let Some(value) = self.node_ref_mut().remove(key, &mut |children| {
             let level = children.level();
-            reinsert_entries[level] = Some(unsafe { children.unwrap() });
+            reinsert_entries[level] = Some(children.unwrap());
         }) {
             self.try_unbranch();
 
@@ -706,9 +873,11 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<N, D, Key, Value> {
         }
     }
 
-    /// Unwraps the node from the container without dropping it.
-    pub(crate) unsafe fn unwrap(self) -> Node<N, D, Key, Value> {
-        let node = ptr::read(&self.node);
+    /// Unwraps the node from the container without dropping it. The returned
+    /// node can only be wrapped again with the same level and [`NodeOps`] that
+    /// were used to create the container.
+    pub(crate) fn unwrap(self) -> Node<N, D, Key, Value> {
+        let node = unsafe { ptr::read(&self.node) };
         mem::forget(self);
         node
     }
@@ -930,13 +1099,13 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRef<'a, N, D, Key, Valu
     {
         let mut clone_children = self.ops.children.new();
         for child in self.iter() {
-            clone_children.push(unsafe { child.clone().unwrap() });
+            clone_children.push(child.clone().unwrap());
         }
 
         InnerNodeChildrenContainer {
             ops: self.ops,
             level: self.level,
-            children: unsafe { clone_children.unwrap() },
+            children: clone_children.unwrap(),
         }
     }
 
@@ -1098,7 +1267,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, N, D, Key, V
         }
         let mut children = unsafe { self.ops.children.wrap_ref_mut(&mut self.children) };
         children
-            .try_push(unsafe { node.unwrap() })
+            .try_push(node.unwrap())
             .map(|node| unsafe { self.ops.wrap(node, self.level.get() - 1) })
     }
 
@@ -1111,7 +1280,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, N, D, Key, V
     {
         let children = unsafe { self.ops.children.wrap_ref_mut(&mut self.children) };
         let (new_bounds, sibling_bounds, sibling_children) =
-            unsafe { split::quadratic(self.ops.min_children, children, overflow_node.unwrap()) };
+            split::quadratic(self.ops.min_children, children, overflow_node.unwrap());
         (new_bounds, unsafe {
             self.ops.wrap(
                 Node::new(
@@ -1189,7 +1358,7 @@ impl<N, const D: usize, Key, Value> IntoIterator for InnerNodeChildrenContainer<
     fn into_iter(self) -> Self::IntoIter {
         let ops = self.ops;
         let level = self.level;
-        let children = unsafe { self.unwrap() };
+        let children = self.unwrap();
         InnerNodeChildrenIntoIter {
             ops,
             level,
@@ -1221,8 +1390,12 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenContainer<N, D, Key, Va
         }
     }
 
-    unsafe fn unwrap(self) -> FCVec<Node<N, D, Key, Value>> {
-        let children = ptr::read(&self.children);
+    /// Unwraps the children from the container without dropping them. The
+    /// returned children can only be wrapped again with the same level and
+    /// [`NodeOps`] that were used to create the container, and must be dropped
+    /// to avoid memory leaks.
+    fn unwrap(self) -> FCVec<Node<N, D, Key, Value>> {
+        let children = unsafe { ptr::read(&self.children) };
         mem::forget(self);
         children
     }
@@ -1285,7 +1458,11 @@ impl<N, const D: usize, Key, Value> NodeChildrenContainer<N, D, Key, Value> {
         }
     }
 
-    unsafe fn unwrap(self) -> NodeChildren<N, D, Key, Value> {
+    /// Unwraps the children from the container without dropping them. The
+    /// returned children can only be wrapped again with the same level and
+    /// [`NodeOps`] that were used to create the container, and must be dropped
+    /// to avoid memory leaks.
+    fn unwrap(self) -> NodeChildren<N, D, Key, Value> {
         match self {
             NodeChildrenContainer::Inner(children) => NodeChildren {
                 inner: ManuallyDrop::new(children.unwrap()),
