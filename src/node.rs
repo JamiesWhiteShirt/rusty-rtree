@@ -1171,6 +1171,17 @@ struct InnerNodeChildrenContainer<N, const D: usize, Key, Value> {
     children: FCVec<Node<N, D, Key, Value>>,
 }
 
+impl<N, const D: usize, Key, Value> Debug for InnerNodeChildrenContainer<N, D, Key, Value>
+where
+    N: Debug,
+    Key: Debug,
+    Value: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.r#ref().fmt(f)
+    }
+}
+
 impl<N, const D: usize, Key, Value> IntoIterator for InnerNodeChildrenContainer<N, D, Key, Value> {
     type Item = NodeContainer<N, D, Key, Value>;
     type IntoIter = InnerNodeChildrenIntoIter<N, D, Key, Value>;
@@ -1194,6 +1205,14 @@ impl<'a, N, const D: usize, Key, Value> Drop for InnerNodeChildrenContainer<N, D
 }
 
 impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenContainer<N, D, Key, Value> {
+    fn r#ref(&'a self) -> InnerNodeChildrenRef<'a, N, D, Key, Value> {
+        InnerNodeChildrenRef {
+            ops: self.ops,
+            level: self.level,
+            children: &self.children,
+        }
+    }
+
     fn ref_mut(&'a mut self) -> InnerNodeChildrenRefMut<'a, N, D, Key, Value> {
         InnerNodeChildrenRefMut {
             ops: self.ops,
@@ -1240,11 +1259,29 @@ enum NodeChildrenContainer<N, const D: usize, Key, Value> {
     Leaf(FCVecContainer<(Key, Value)>),
 }
 
+impl<N, const D: usize, Key, Value> Debug for NodeChildrenContainer<N, D, Key, Value>
+where
+    N: Debug,
+    Key: Debug,
+    Value: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.r#ref().fmt(f)
+    }
+}
+
 impl<N, const D: usize, Key, Value> NodeChildrenContainer<N, D, Key, Value> {
     fn level(&self) -> usize {
         match self {
             NodeChildrenContainer::Inner(children) => children.level.get(),
             NodeChildrenContainer::Leaf(_) => 0,
+        }
+    }
+
+    fn r#ref(&self) -> NodeChildrenRef<N, D, Key, Value> {
+        match self {
+            NodeChildrenContainer::Inner(children) => NodeChildrenRef::Inner(children.r#ref()),
+            NodeChildrenContainer::Leaf(children) => NodeChildrenRef::Leaf(children.r#ref()),
         }
     }
 

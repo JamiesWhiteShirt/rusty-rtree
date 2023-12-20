@@ -113,7 +113,7 @@ impl<'a, T> IntoIterator for &'a mut FCVec<T> {
 ///
 /// Operations are only safe on a given [FCVec<T>] if it was created by this
 /// [FCVecOps] with [FCVecOps::new].
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub(crate) struct FCVecOps {
     cap: usize,
 }
