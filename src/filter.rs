@@ -172,3 +172,16 @@ where
         self.space.contains(key)
     }
 }
+
+/// Matches all keys.
+pub struct NoFilter;
+
+impl<N, const D: usize, Key> SpatialFilter<N, D, Key> for NoFilter {
+    fn test_bounds(&self, _: &Bounds<N, D>) -> bool {
+        true
+    }
+
+    fn test_key(&self, _: &Key) -> bool {
+        true
+    }
+}

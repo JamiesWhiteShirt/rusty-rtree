@@ -8,6 +8,7 @@ pub mod geom;
 pub mod intersects;
 mod iter;
 mod node;
+pub mod ranking;
 mod select;
 mod split;
 mod util;
@@ -17,6 +18,7 @@ use bounds::Bounded;
 use filter::SpatialFilter;
 use iter::FilterIter;
 use node::{Node, NodeOps, NodeRef, NodeRefMut, RootNodeRefMut};
+use ranking::Ranking;
 use std::{borrow::Borrow, fmt::Debug, ops::Sub};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -156,6 +158,8 @@ where
         unsafe { FilterIter::new(self.height, &self.root, filter) }
     }
 
+    /// Returns a mutable iterator over all entries in the R-tree using a
+    /// spatial filter.
     pub fn filter_iter_mut<'a, Q, Filter: SpatialFilter<N, D, Q>>(
         &'a mut self,
         filter: Filter,
@@ -166,6 +170,126 @@ where
         Filter: SpatialFilter<N, D, Q>,
     {
         unsafe { iter::FilterIterMut::new(self.height, &mut self.root, filter) }
+    }
+
+    /// Returns an entry with a minimal key according to the given [`Ranking`].
+    /// If there are multiple entries with minimal keys, either because the keys
+    /// have the same rank or multiple entries with the same key exist, the
+    /// first entry is returned.
+    pub fn min_by<R>(&self, ranking: R) -> Option<(&Key, &Value)>
+    where
+        R: Ranking<N, D, Key>,
+    {
+        self.iter_asc_by(ranking).next()
+    }
+
+    /// Returns a mutable entry with a minimal key according to the given
+    /// [`Ranking`]. If there are multiple entries with minimal keys, either
+    /// because the keys have the same rank or multiple entries with the same
+    /// key exist, the first entry is returned.
+    pub fn min_by_mut<R>(&mut self, ranking: R) -> Option<(&Key, &mut Value)>
+    where
+        R: Ranking<N, D, Key>,
+    {
+        self.iter_asc_by_mut(ranking).next()
+    }
+
+    /// Returns an entry with a minimal key according to the given [`Ranking`],
+    /// filtering out entries whose key rank metric is None. If there are
+    /// multiple entries with minimal keys, either because the keys have the
+    /// same rank or multiple entries with the same key exist, the first entry
+    /// is returned.
+    ///
+    /// The [`Ranking`] invariants still apply using Option<S> order. If
+    /// `bounds_min(bounds)` is None, it implies that for all keys `k` contained
+    /// by `bounds`, `rank_key(k)` is None.
+    pub fn filter_min_by<R, S>(&self, ranking: R) -> Option<(&Key, &Value)>
+    where
+        R: Ranking<N, D, Key, Metric = Option<S>>,
+        S: Ord,
+    {
+        self.filter_iter_asc_by(ranking).next()
+    }
+
+    /// Returns a mutable entry with a minimal key according to the given
+    /// [`Ranking`], filtering out entries whose key rank metric is None. If
+    /// there are multiple entries with minimal keys, either because the keys
+    /// have the same rank or multiple entries with the same key exist, the
+    /// first entry is returned.
+    ///
+    /// The [`Ranking`] invariants still apply using Option<S> order. If
+    /// `bounds_min(bounds)` is None, it implies that for all keys `k` contained
+    /// by `bounds`, `rank_key(k)` is None.
+    pub fn filter_min_by_mut<R, S>(&mut self, ranking: R) -> Option<(&Key, &mut Value)>
+    where
+        R: Ranking<N, D, Key, Metric = Option<S>>,
+        S: Ord,
+    {
+        self.filter_iter_asc_by_mut(ranking).next()
+    }
+
+    /// Returns an iterator over the entries in the R-tree in _ascending key
+    /// order_ according to the given [`Ranking`].
+    ///
+    /// To only get the entry with the least key, use [`RTree::min_by`].
+    pub fn iter_asc_by<R>(&self, ranking: R) -> iter::SortedIter<N, D, Key, Value, R>
+    where
+        R: Ranking<N, D, Key>,
+    {
+        unsafe { iter::SortedIter::new(self.height, &self.root, ranking) }
+    }
+
+    /// Returns a mutable iterator over the entries in the R-tree in _ascending
+    /// key order_ according to the given [`Ranking`].
+    ///
+    /// To only get the entry with the least key, use [`RTree::min_by_mut`].
+    pub fn iter_asc_by_mut<R>(&mut self, ranking: R) -> iter::SortedIterMut<N, D, Key, Value, R>
+    where
+        R: Ranking<N, D, Key>,
+    {
+        unsafe { iter::SortedIterMut::new(self.height, &mut self.root, ranking) }
+    }
+
+    /// Returns an iterator over the entries in the R-tree in _ascending key
+    /// order_ according to the given [`Ranking`], filtering out entries whose
+    /// key rank metric is None.
+    ///
+    /// The [`Ranking`] invariants still apply using Option<S> order. If
+    /// `bounds_min(bounds)` is None, it implies that for all keys `k` contained
+    /// by `bounds`, `rank_key(k)` is None.
+    ///
+    /// To only get the entry with the least key with the same filtering, use
+    /// [`RTree::filter_min_by`].
+    pub fn filter_iter_asc_by<R, S>(
+        &self,
+        ranking: R,
+    ) -> iter::FilterSortedIter<N, D, Key, Value, R, S>
+    where
+        R: Ranking<N, D, Key, Metric = Option<S>>,
+        S: Ord,
+    {
+        unsafe { iter::FilterSortedIter::new(self.height, &self.root, ranking) }
+    }
+
+    /// Returns a mutable iterator over the entries in the R-tree in _ascending
+    /// key order_ according to the given [`Ranking`], filtering out entries
+    /// whose key rank metric is None.
+    ///
+    /// The [`Ranking`] invariants still apply using Option<S> order. If
+    /// `bounds_min(bounds)` is None, it implies that for all keys `k` contained
+    /// by `bounds`, `rank_key(k)` is None.
+    ///
+    /// To only get the entry with the least key with the same filtering, use
+    /// [`RTree::filter_min_by_mut`].
+    pub fn filter_iter_asc_by_mut<R, S>(
+        &mut self,
+        ranking: R,
+    ) -> iter::FilterSortedIterMut<N, D, Key, Value, R, S>
+    where
+        R: Ranking<N, D, Key, Metric = Option<S>>,
+        S: Ord,
+    {
+        unsafe { iter::FilterSortedIterMut::new(self.height, &mut self.root, ranking) }
     }
 
     // Inserts a new key-value pair into the R-tree, ignoring any existing
@@ -296,6 +420,9 @@ mod tests {
     use crate::filter::BoundedIntersectsFilter;
     use crate::geom::line::Line;
     use crate::geom::sphere::Sphere;
+    use crate::ranking::EuclideanDistanceRanking;
+    use crate::ranking::PointDistance;
+    use crate::ranking::Ranking;
     use crate::vector::Vector;
     use crate::RTreeConfig;
 
@@ -737,5 +864,50 @@ mod tests {
         drop(tree);
         assert_eq!(key_count.borrow().clone(), 0);
         assert_eq!(value_count.borrow().clone(), 0);
+    }
+
+    #[test]
+    fn sorted_iter_asc() {
+        let mut tree = RTree::<i32, 2, Vector<i32, 2>, ()>::new(RTreeConfig {
+            max_children: 4,
+            min_children: 2,
+        });
+
+        for x in 0..10 {
+            for y in 0..10 {
+                tree.insert(Vector([x * 10, y * 10]), ());
+            }
+        }
+
+        let mut visited = [[false; 10]; 10];
+        fn mark_visited(visited: &mut [[bool; 10]; 10], key: &Vector<i32, 2>) {
+            let x = key[0] as usize / 10;
+            let y = key[1] as usize / 10;
+            assert!(!visited[x][y]);
+            visited[x][y] = true;
+        }
+
+        let center = Vector([9, 9]);
+        let ranking = EuclideanDistanceRanking::<i32, 2, Vector<i32, 2>>::new(center);
+
+        let mut iter = tree.iter_asc_by(ranking);
+        let mut last_dist = {
+            let (key, _) = iter.next().unwrap();
+            mark_visited(&mut visited, key);
+            center.dist_sq(key)
+        };
+
+        for (key, _) in iter {
+            let dist = center.dist_sq(key);
+            assert!(dist >= last_dist);
+            last_dist = dist;
+            mark_visited(&mut visited, key);
+        }
+
+        for x in 0..10 {
+            for y in 0..10 {
+                assert!(visited[x][y]);
+            }
+        }
     }
 }

@@ -17,8 +17,14 @@ where
 {
     fn bounds(&self) -> Bounds<N, D> {
         Bounds {
-            min: self.center.map(|coord| coord - self.radius.clone()),
-            max: self.center.map(|coord| coord + self.radius.clone()),
+            min: self
+                .center
+                .clone()
+                .into_map(|coord| coord - self.radius.clone()),
+            max: self
+                .center
+                .clone()
+                .into_map(|coord| coord + self.radius.clone()),
         }
     }
 }

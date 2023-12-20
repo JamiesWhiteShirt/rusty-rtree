@@ -1,6 +1,5 @@
 use std::{
     fmt::Debug,
-    iter::Sum,
     ops::{Add, AddAssign, Index, IndexMut, Mul, Sub},
 };
 
@@ -30,19 +29,22 @@ impl<S, const D: usize> Vector<S, D> {
         Vector(self.0.map(f))
     }
 
-    pub fn map<F, U>(&self, f: F) -> Vector<U, D>
+    pub fn map<F, U>(&self, mut f: F) -> Vector<U, D>
     where
-        S: Clone,
-        F: FnMut(S) -> U,
+        F: FnMut(&S) -> U,
     {
-        Vector(self.0.clone().map(f))
+        Vector(array_init(|i| f(&self.0[i])))
     }
 
     pub fn sq_mag(&self) -> S
     where
-        S: Clone + Sum + Sub<Output = S> + Mul<Output = S>,
+        S: Clone + Add<Output = S> + Sub<Output = S> + Mul<Output = S>,
     {
-        self.0.iter().map(|v| v.clone() * v.clone()).sum()
+        self.0
+            .iter()
+            .map(|v| v.clone() * v.clone())
+            .reduce(|a, b| a + b)
+            .unwrap()
     }
 }
 
