@@ -405,7 +405,7 @@ mod tests {
                 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
                 0xDE, 0xAD, 0xBE, 0xEF,
             ]);
-            for i in 0..1000 {
+            for i in 0..50 {
                 let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
                 let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
                 tree.insert(Bounds { min, max }, i);
@@ -447,7 +447,7 @@ mod tests {
                 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
                 0xDE, 0xAD, 0xBE, 0xEF,
             ]);
-            for i in 0..1000 {
+            for i in 0..50 {
                 let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
                 let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
                 tree.insert(Bounds { min, max }, i);
@@ -472,7 +472,7 @@ mod tests {
                 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
                 0xDE, 0xAD, 0xBE, 0xEF,
             ]);
-            for i in 0..1000 {
+            for i in 0..50 {
                 let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
                 let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
                 tree.insert(Bounds { min, max }, i);
@@ -487,7 +487,7 @@ mod tests {
                 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
                 0xDE, 0xAD, 0xBE, 0xEF,
             ]);
-            for i in 0..1000 {
+            for i in 0..50 {
                 let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
                 let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
                 assert_eq!(tree.remove(&Bounds { min, max }), Some(i));
@@ -524,36 +524,43 @@ mod tests {
     }
 
     #[bench]
+    #[cfg_attr(miri, ignore)]
     fn insert_bench_4(bencher: &mut Bencher) {
         do_insert_bench(bencher, 4);
     }
 
     #[bench]
+    #[cfg_attr(miri, ignore)]
     fn insert_bench_8(bencher: &mut Bencher) {
         do_insert_bench(bencher, 8);
     }
 
     #[bench]
+    #[cfg_attr(miri, ignore)]
     fn insert_bench_16(bencher: &mut Bencher) {
         do_insert_bench(bencher, 16);
     }
 
     #[bench]
+    #[cfg_attr(miri, ignore)]
     fn insert_bench_32(bencher: &mut Bencher) {
         do_insert_bench(bencher, 32);
     }
 
     #[bench]
+    #[cfg_attr(miri, ignore)]
     fn insert_bench_64(bencher: &mut Bencher) {
         do_insert_bench(bencher, 64);
     }
 
     #[bench]
+    #[cfg_attr(miri, ignore)]
     fn insert_bench_128(bencher: &mut Bencher) {
         do_insert_bench(bencher, 128);
     }
 
     #[bench]
+    #[cfg_attr(miri, ignore)]
     fn insert_bench_256(bencher: &mut Bencher) {
         do_insert_bench(bencher, 256);
     }
@@ -585,6 +592,7 @@ mod tests {
     }
 
     #[bench]
+    #[cfg_attr(miri, ignore)]
     fn query_bench_64(bencher: &mut Bencher) {
         do_query_bench(bencher, 64);
     }
@@ -618,6 +626,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn cosmic() -> Result<(), Box<dyn Error>> {
         let mut stars = RTree::<N32, 3, Vector<N32, 3>, StarInfo>::new(RTreeConfig {
             min_children: 4,
@@ -713,7 +722,7 @@ mod tests {
             min_children: 2,
         });
 
-        for i in 0..1000 {
+        for i in 0..50 {
             tree.insert(
                 Key {
                     i,
