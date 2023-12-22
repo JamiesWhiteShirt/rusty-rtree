@@ -401,6 +401,19 @@ where
     }
 }
 
+impl<'a, N, const D: usize, Key, Value> IntoIterator for &'a mut RTree<N, D, Key, Value>
+where
+    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
+    Key: Bounded<N, D> + Eq,
+{
+    type Item = (&'a Key, &'a mut Value);
+    type IntoIter = iter::IterMut<'a, N, D, Key, Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use core::fmt;
@@ -422,7 +435,6 @@ mod tests {
     use crate::geom::sphere::Sphere;
     use crate::ranking::EuclideanDistanceRanking;
     use crate::ranking::PointDistance;
-    use crate::ranking::Ranking;
     use crate::vector::Vector;
     use crate::RTreeConfig;
 

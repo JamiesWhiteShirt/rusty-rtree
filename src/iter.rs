@@ -1,15 +1,16 @@
 use std::{
     borrow::Borrow,
-    cmp::{self, min, Reverse},
+    cmp::{self, Reverse},
     collections::BinaryHeap,
     marker::PhantomData,
     mem::ManuallyDrop,
+    ptr::NonNull,
     slice,
 };
 
 use crate::{
-    bounds::{Bounded, Bounds},
-    filter::SpatialFilter,
+    bounds::Bounds,
+    filter::{NoFilter, SpatialFilter},
     node::Node,
     ranking::Ranking,
 };
@@ -19,43 +20,103 @@ union IterLevel<'a, N, const D: usize, Key, Value> {
     leaf: ManuallyDrop<slice::Iter<'a, (Key, Value)>>,
 }
 
-pub struct Iter<'a, N, const D: usize, Key, Value> {
-    // TODO: Use vector capacity instead of height?
-    height: usize,
-    stack: Vec<IterLevel<'a, N, D, Key, Value>>,
+fn empty_slice<'a, T>() -> &'a mut [T] {
+    // SAFETY: For any type `T`, `NonNull::<T>::dangling().as_ptr()` is a valid
+    // pointer to an array of length 0. Because the slice is empty, it is safe to
+    // treat it as mutable and to assign it any lifetime.
+    unsafe { slice::from_raw_parts_mut(NonNull::<T>::dangling().as_ptr(), 0) }
 }
 
-impl<'a, N, const D: usize, Key, Value> Iter<'a, N, D, Key, Value> {
-    pub(crate) unsafe fn new(
-        height: usize,
-        root: &'a Node<N, D, Key, Value>,
-    ) -> Iter<'a, N, D, Key, Value> {
-        let mut stack = Vec::with_capacity(height);
-        stack.push(if height > 0 {
+unsafe fn iter_init<'a, N, const D: usize, Key, Value, Q, F>(
+    height: usize,
+    root: &'a Node<N, D, Key, Value>,
+    filter: &impl SpatialFilter<N, D, Q>,
+) -> Box<[IterLevel<'a, N, D, Key, Value>]>
+where
+    Key: Borrow<Q>,
+    Q: ?Sized,
+{
+    if !filter.test_bounds(&root.bounds) {
+        return Box::new([]);
+    }
+
+    let mut stack = Vec::with_capacity(height + 1);
+    // Initialize the stack with empty iterators for each level of the tree
+    // except the root. In the first iteration, all iterators but the root
+    // will act as if they are exhausted, so the stack will be initialized
+    // with true iterators starting from the root.
+    for level in 0..height {
+        stack.push(if level > 0 {
             IterLevel {
-                inner: ManuallyDrop::new(root.inner_children().iter()),
+                inner: ManuallyDrop::new(empty_slice().iter()),
             }
         } else {
             IterLevel {
-                leaf: ManuallyDrop::new(root.leaf_children().iter()),
+                leaf: ManuallyDrop::new(empty_slice().iter()),
             }
-        });
-        Iter { height, stack }
+        })
     }
+    stack.push(if height > 0 {
+        IterLevel {
+            inner: ManuallyDrop::new(root.inner_children().iter()),
+        }
+    } else {
+        IterLevel {
+            leaf: ManuallyDrop::new(root.leaf_children().iter()),
+        }
+    });
+    stack.into_boxed_slice()
 }
 
-impl<'a, N, const D: usize, Key, Value> Drop for Iter<'a, N, D, Key, Value> {
-    fn drop(&mut self) {
-        let stack_len = self.stack.len();
-        for iter in &mut self.stack[0..min(stack_len, self.height)] {
-            unsafe {
-                ManuallyDrop::drop(&mut iter.inner);
+fn iter_next<'a, N, const D: usize, Key, Value, Q, F>(
+    stack: &mut [IterLevel<'a, N, D, Key, Value>],
+    filter: &impl SpatialFilter<N, D, Q>,
+) -> Option<(&'a Key, &'a Value)>
+where
+    Key: Borrow<Q>,
+    Q: ?Sized,
+    F: SpatialFilter<N, D, Q>,
+{
+    let mut level = 0;
+    while level < stack.len() {
+        if level == 0 {
+            if let Some(entry) =
+                (*unsafe { &mut stack[level].leaf }).find(|(key, _)| filter.test_key(key.borrow()))
+            {
+                return Some((&entry.0, &entry.1));
+            } else {
+                level += 1;
+            }
+        } else {
+            if let Some(node) =
+                (*unsafe { &mut stack[level].inner }).find(|node| filter.test_bounds(&node.bounds))
+            {
+                level -= 1;
+                stack[level] = if level == 0 {
+                    IterLevel {
+                        leaf: ManuallyDrop::new(unsafe { node.leaf_children() }.iter()),
+                    }
+                } else {
+                    IterLevel {
+                        inner: ManuallyDrop::new(unsafe { node.inner_children() }.iter()),
+                    }
+                };
+            } else {
+                level += 1;
             }
         }
-        if self.stack.len() == self.height + 1 {
-            unsafe {
-                ManuallyDrop::drop(&mut self.stack[self.height].leaf);
-            }
+    }
+    None
+}
+
+pub struct Iter<'a, N, const D: usize, Key, Value> {
+    stack: Box<[IterLevel<'a, N, D, Key, Value>]>,
+}
+
+impl<'a, N, const D: usize, Key, Value> Iter<'a, N, D, Key, Value> {
+    pub(crate) unsafe fn new(height: usize, root: &'a Node<N, D, Key, Value>) -> Self {
+        Self {
+            stack: iter_init::<N, D, Key, Value, Key, NoFilter>(height, root, &NoFilter),
         }
     }
 }
@@ -64,33 +125,44 @@ impl<'a, N, const D: usize, Key, Value> Iterator for Iter<'a, N, D, Key, Value> 
     type Item = (&'a Key, &'a Value);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while !self.stack.is_empty() {
-            let level = (self.height + 1) - self.stack.len();
-            if level == 0 {
-                // Iterating over leaf node
-                if let Some(entry) = (*unsafe { &mut self.stack.last_mut().unwrap().leaf }).next() {
-                    return Some((&entry.0, &entry.1));
-                } else {
-                    unsafe { ManuallyDrop::drop(&mut self.stack.pop().unwrap().leaf) };
-                }
-            } else {
-                // Iterating over inner node
-                if let Some(node) = (*unsafe { &mut self.stack.last_mut().unwrap().inner }).next() {
-                    self.stack.push(if level > 1 {
-                        IterLevel {
-                            inner: ManuallyDrop::new(unsafe { node.inner_children() }.iter()),
-                        }
-                    } else {
-                        IterLevel {
-                            leaf: ManuallyDrop::new(unsafe { node.leaf_children() }.iter()),
-                        }
-                    })
-                } else {
-                    unsafe { ManuallyDrop::drop(&mut self.stack.pop().unwrap().inner) };
-                }
-            }
-        }
-        Option::None
+        iter_next::<N, D, Key, Value, Key, NoFilter>(&mut self.stack, &NoFilter)
+    }
+}
+
+pub struct FilterIter<'a, N, const D: usize, Key, Value, Q, F>
+where
+    Q: ?Sized,
+{
+    stack: Box<[IterLevel<'a, N, D, Key, Value>]>,
+    filter: F,
+    _phantom: PhantomData<Q>,
+}
+
+impl<'a, N, const D: usize, Key, Value, Q, F> FilterIter<'a, N, D, Key, Value, Q, F>
+where
+    Key: Borrow<Q>,
+    Q: ?Sized,
+    F: SpatialFilter<N, D, Q>,
+{
+    pub(crate) unsafe fn new(height: usize, root: &'a Node<N, D, Key, Value>, filter: F) -> Self {
+        return Self {
+            stack: iter_init::<N, D, Key, Value, Q, F>(height, root, &filter),
+            filter,
+            _phantom: PhantomData,
+        };
+    }
+}
+
+impl<'a, N, const D: usize, Key, Value, Q, F> Iterator for FilterIter<'a, N, D, Key, Value, Q, F>
+where
+    Key: Borrow<Q>,
+    Q: ?Sized,
+    F: SpatialFilter<N, D, Q>,
+{
+    type Item = (&'a Key, &'a Value);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        iter_next::<N, D, Key, Value, Q, F>(&mut self.stack, &self.filter)
     }
 }
 
@@ -99,42 +171,95 @@ union IterLevelMut<'a, N, const D: usize, Key, Value> {
     leaf: ManuallyDrop<slice::IterMut<'a, (Key, Value)>>,
 }
 
-pub struct IterMut<'a, N, const D: usize, Key, Value> {
+unsafe fn iter_mut_init<'a, N, const D: usize, Key, Value, Q>(
     height: usize,
-    stack: Vec<IterLevelMut<'a, N, D, Key, Value>>,
-}
+    root: &'a mut Node<N, D, Key, Value>,
+    filter: &impl SpatialFilter<N, D, Q>,
+) -> Box<[IterLevelMut<'a, N, D, Key, Value>]>
+where
+    Key: Borrow<Q>,
+    Q: ?Sized,
+{
+    if !filter.test_bounds(&root.bounds) {
+        return Box::new([]);
+    }
 
-impl<'a, N, const D: usize, Key, Value> IterMut<'a, N, D, Key, Value> {
-    pub(crate) unsafe fn new(
-        height: usize,
-        root: &'a mut Node<N, D, Key, Value>,
-    ) -> IterMut<'a, N, D, Key, Value> {
-        let mut stack = Vec::with_capacity(height);
-        stack.push(if height > 0 {
+    let mut stack = Vec::with_capacity(height + 1);
+    // Initialize the stack with empty iterators for each level of the tree
+    // except the root. In the first iteration, all iterators but the root
+    // will act as if they are exhausted, so the stack will be initialized
+    // with true iterators starting from the root.
+    for level in 0..height {
+        stack.push(if level > 0 {
             IterLevelMut {
-                inner: ManuallyDrop::new(root.inner_children_mut().iter_mut()),
+                inner: ManuallyDrop::new(empty_slice().iter_mut()),
             }
         } else {
             IterLevelMut {
-                leaf: ManuallyDrop::new(root.leaf_children_mut().iter_mut()),
+                leaf: ManuallyDrop::new(empty_slice().iter_mut()),
             }
-        });
-        IterMut { height, stack }
+        })
     }
+    stack.push(if height > 0 {
+        IterLevelMut {
+            inner: ManuallyDrop::new(root.inner_children_mut().iter_mut()),
+        }
+    } else {
+        IterLevelMut {
+            leaf: ManuallyDrop::new(root.leaf_children_mut().iter_mut()),
+        }
+    });
+    stack.into_boxed_slice()
 }
 
-impl<'a, N, const D: usize, Key, Value> Drop for IterMut<'a, N, D, Key, Value> {
-    fn drop(&mut self) {
-        let stack_len = self.stack.len();
-        for iter in &mut self.stack[0..min(stack_len, self.height)] {
-            unsafe {
-                ManuallyDrop::drop(&mut iter.inner);
+fn iter_mut_next<'a, N, const D: usize, Key, Value, Q>(
+    stack: &mut [IterLevelMut<'a, N, D, Key, Value>],
+    filter: &impl SpatialFilter<N, D, Q>,
+) -> Option<(&'a Key, &'a mut Value)>
+where
+    Key: Borrow<Q>,
+    Q: ?Sized,
+{
+    let mut level = 0;
+    while level < stack.len() {
+        if level == 0 {
+            if let Some(entry) =
+                (*unsafe { &mut stack[level].leaf }).find(|(key, _)| filter.test_key(key.borrow()))
+            {
+                return Some((&entry.0, &mut entry.1));
+            } else {
+                level += 1;
+            }
+        } else {
+            if let Some(node) =
+                (*unsafe { &mut stack[level].inner }).find(|node| filter.test_bounds(&node.bounds))
+            {
+                level -= 1;
+                stack[level] = if level == 0 {
+                    IterLevelMut {
+                        leaf: ManuallyDrop::new(unsafe { node.leaf_children_mut() }.iter_mut()),
+                    }
+                } else {
+                    IterLevelMut {
+                        inner: ManuallyDrop::new(unsafe { node.inner_children_mut() }.iter_mut()),
+                    }
+                };
+            } else {
+                level += 1;
             }
         }
-        if stack_len == self.height + 1 {
-            unsafe {
-                ManuallyDrop::drop(&mut self.stack[self.height].leaf);
-            }
+    }
+    None
+}
+
+pub struct IterMut<'a, N, const D: usize, Key, Value> {
+    stack: Box<[IterLevelMut<'a, N, D, Key, Value>]>,
+}
+
+impl<'a, N, const D: usize, Key, Value> IterMut<'a, N, D, Key, Value> {
+    pub(crate) unsafe fn new(height: usize, root: &'a mut Node<N, D, Key, Value>) -> Self {
+        Self {
+            stack: iter_mut_init::<N, D, Key, Value, Key>(height, root, &NoFilter),
         }
     }
 }
@@ -143,277 +268,48 @@ impl<'a, N, const D: usize, Key, Value> Iterator for IterMut<'a, N, D, Key, Valu
     type Item = (&'a Key, &'a mut Value);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while !self.stack.is_empty() {
-            let level = (self.height + 1) - self.stack.len();
-            if level == 0 {
-                // Iterating over leaf node
-                if let Some(entry) = (*unsafe { &mut self.stack.last_mut().unwrap().leaf }).next() {
-                    return Some((&entry.0, &mut entry.1));
-                } else {
-                    unsafe { ManuallyDrop::drop(&mut self.stack.pop().unwrap().leaf) };
-                }
-            } else {
-                // Iterating over inner node
-                if let Some(node) = (*unsafe { &mut self.stack.last_mut().unwrap().inner }).next() {
-                    self.stack.push(if level > 1 {
-                        IterLevelMut {
-                            inner: ManuallyDrop::new(
-                                unsafe { node.inner_children_mut() }.iter_mut(),
-                            ),
-                        }
-                    } else {
-                        IterLevelMut {
-                            leaf: ManuallyDrop::new(unsafe { node.leaf_children_mut() }.iter_mut()),
-                        }
-                    })
-                } else {
-                    unsafe { ManuallyDrop::drop(&mut self.stack.pop().unwrap().inner) };
-                }
-            }
-        }
-        Option::None
+        iter_mut_next(&mut self.stack, &NoFilter)
     }
 }
 
-pub struct FilterIter<'a, N, const D: usize, Key, Value, Q, Filter>
+pub struct FilterIterMut<'a, N, const D: usize, Key, Value, Q, F>
 where
-    Key: Borrow<Q>,
     Q: ?Sized,
-    Filter: SpatialFilter<N, D, Q>,
 {
-    filter: Filter,
-    // TODO: Use vector capacity instead of height?
-    height: usize,
-    stack: Vec<IterLevel<'a, N, D, Key, Value>>,
-
+    stack: Box<[IterLevelMut<'a, N, D, Key, Value>]>,
+    filter: F,
     _phantom: PhantomData<Q>,
 }
 
-impl<'a, N, const D: usize, Key, Value, Q, Filter> FilterIter<'a, N, D, Key, Value, Q, Filter>
+impl<'a, N, const D: usize, Key, Value, Q, F> FilterIterMut<'a, N, D, Key, Value, Q, F>
 where
     Key: Borrow<Q>,
     Q: ?Sized,
-    Filter: SpatialFilter<N, D, Q>,
-{
-    pub(crate) unsafe fn new(
-        height: usize,
-        root: &'a Node<N, D, Key, Value>,
-        filter: Filter,
-    ) -> Self {
-        if !filter.test_bounds(&root.bounds) {
-            return FilterIter {
-                filter,
-                height,
-                stack: Vec::new(),
-
-                _phantom: PhantomData,
-            };
-        }
-        let mut stack = Vec::with_capacity(height);
-        stack.push(if height > 1 {
-            IterLevel {
-                inner: ManuallyDrop::new(root.inner_children().iter()),
-            }
-        } else {
-            IterLevel {
-                leaf: ManuallyDrop::new(root.leaf_children().iter()),
-            }
-        });
-        FilterIter {
-            filter,
-            height,
-            stack,
-
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<'a, N, const D: usize, Key, Value, Q, Filter> Drop
-    for FilterIter<'a, N, D, Key, Value, Q, Filter>
-where
-    Key: Borrow<Q>,
-    Q: ?Sized,
-    Filter: SpatialFilter<N, D, Q>,
-{
-    fn drop(&mut self) {
-        let stack_len = self.stack.len();
-        for iter in &mut self.stack[0..min(stack_len, self.height)] {
-            unsafe {
-                ManuallyDrop::drop(&mut iter.inner);
-            }
-        }
-        if stack_len == self.height + 1 {
-            unsafe {
-                ManuallyDrop::drop(&mut self.stack[self.height].leaf);
-            }
-        }
-    }
-}
-
-impl<'a, N, const D: usize, Key, Value, Q, Filter> Iterator
-    for FilterIter<'a, N, D, Key, Value, Q, Filter>
-where
-    N: Ord,
-    Key: Bounded<N, D> + Borrow<Q>,
-    Q: ?Sized,
-    Filter: SpatialFilter<N, D, Q>,
-{
-    type Item = (&'a Key, &'a Value);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while !self.stack.is_empty() {
-            let level = (self.height + 1) - self.stack.len();
-            if level == 0 {
-                // Iterating over leaf node
-                if let Some(entry) = (*unsafe { &mut self.stack.last_mut().unwrap().leaf })
-                    .find(|(key, _)| self.filter.test_key(key.borrow()))
-                {
-                    return Some((&entry.0, &entry.1));
-                } else {
-                    unsafe { ManuallyDrop::drop(&mut self.stack.pop().unwrap().leaf) };
-                }
-            } else {
-                // Iterating over inner node
-                if let Some(node) = (*unsafe { &mut self.stack.last_mut().unwrap().inner })
-                    .find(|node| self.filter.test_bounds(&node.bounds))
-                {
-                    self.stack.push(if level > 1 {
-                        IterLevel {
-                            inner: ManuallyDrop::new(unsafe { node.inner_children() }.iter()),
-                        }
-                    } else {
-                        IterLevel {
-                            leaf: ManuallyDrop::new(unsafe { node.leaf_children() }.iter()),
-                        }
-                    })
-                } else {
-                    unsafe { ManuallyDrop::drop(&mut self.stack.pop().unwrap().inner) };
-                }
-            }
-        }
-        Option::None
-    }
-}
-
-pub struct FilterIterMut<'a, N, const D: usize, Key, Value, Q, Filter>
-where
-    Key: Borrow<Q>,
-    Q: ?Sized,
-    Filter: SpatialFilter<N, D, Q>,
-{
-    filter: Filter,
-    height: usize,
-    stack: Vec<IterLevelMut<'a, N, D, Key, Value>>,
-
-    _phantom: PhantomData<Q>,
-}
-
-impl<'a, N, const D: usize, Key, Value, Q, Filter> FilterIterMut<'a, N, D, Key, Value, Q, Filter>
-where
-    Key: Borrow<Q>,
-    Q: ?Sized,
-    Filter: SpatialFilter<N, D, Q>,
+    F: SpatialFilter<N, D, Q>,
 {
     pub(crate) unsafe fn new(
         height: usize,
         root: &'a mut Node<N, D, Key, Value>,
-        filter: Filter,
+        filter: F,
     ) -> Self {
-        if !filter.test_bounds(&root.bounds) {
-            return FilterIterMut {
-                filter,
-                height,
-                stack: Vec::new(),
-
-                _phantom: PhantomData,
-            };
-        }
-        let mut stack = Vec::with_capacity(height);
-        stack.push(if height > 1 {
-            IterLevelMut {
-                inner: ManuallyDrop::new(root.inner_children_mut().iter_mut()),
-            }
-        } else {
-            IterLevelMut {
-                leaf: ManuallyDrop::new(root.leaf_children_mut().iter_mut()),
-            }
-        });
-        FilterIterMut {
+        Self {
+            stack: iter_mut_init::<N, D, Key, Value, Q>(height, root, &filter),
             filter,
-            height,
-            stack,
-
             _phantom: PhantomData,
         }
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, Q, Filter> Drop
-    for FilterIterMut<'a, N, D, Key, Value, Q, Filter>
+impl<'a, N, const D: usize, Key, Value, Q, F> Iterator for FilterIterMut<'a, N, D, Key, Value, Q, F>
 where
     Key: Borrow<Q>,
     Q: ?Sized,
-    Filter: SpatialFilter<N, D, Q>,
-{
-    fn drop(&mut self) {
-        let stack_len = self.stack.len();
-        for iter in &mut self.stack[0..min(stack_len, self.height)] {
-            unsafe {
-                ManuallyDrop::drop(&mut iter.inner);
-            }
-        }
-        if stack_len == self.height + 1 {
-            unsafe {
-                ManuallyDrop::drop(&mut self.stack[self.height].leaf);
-            }
-        }
-    }
-}
-
-impl<'a, N, const D: usize, Key, Value, Q, Filter> Iterator
-    for FilterIterMut<'a, N, D, Key, Value, Q, Filter>
-where
-    Key: Borrow<Q>,
-    Q: ?Sized,
-    Filter: SpatialFilter<N, D, Q>,
+    F: SpatialFilter<N, D, Q>,
 {
     type Item = (&'a Key, &'a mut Value);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while !self.stack.is_empty() {
-            let level = (self.height + 1) - self.stack.len();
-            if level == 0 {
-                // Iterating over leaf node
-                if let Some(entry) = (*unsafe { &mut self.stack.last_mut().unwrap().leaf })
-                    .find(|(key, _)| self.filter.test_key(key.borrow()))
-                {
-                    return Some((&entry.0, &mut entry.1));
-                } else {
-                    unsafe { ManuallyDrop::drop(&mut self.stack.pop().unwrap().leaf) };
-                }
-            } else {
-                // Iterating over inner node
-                if let Some(node) = (*unsafe { &mut self.stack.last_mut().unwrap().inner })
-                    .find(|node| self.filter.test_bounds(&node.bounds))
-                {
-                    self.stack.push(if level > 1 {
-                        IterLevelMut {
-                            inner: ManuallyDrop::new(
-                                unsafe { node.inner_children_mut() }.iter_mut(),
-                            ),
-                        }
-                    } else {
-                        IterLevelMut {
-                            leaf: ManuallyDrop::new(unsafe { node.leaf_children_mut() }.iter_mut()),
-                        }
-                    })
-                } else {
-                    unsafe { ManuallyDrop::drop(&mut self.stack.pop().unwrap().inner) };
-                }
-            }
-        }
-        Option::None
+        iter_mut_next(&mut self.stack, &self.filter)
     }
 }
 
