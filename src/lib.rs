@@ -27,8 +27,9 @@ pub struct RTreeConfig {
     pub min_children: usize,
 }
 
-/// R-tree spatial index with a map-like interface. It optimizes for
-/// fast queries for objects that intersect a given space.
+/// R-tree spatial index with a map-like interface. It optimizes for spatial
+/// queries, such as finding objects that intersect a given space, or finding
+/// the nearest object(s) to a given point.
 ///
 /// The R-tree operates on objects that are bounded in `D` dimensions measured
 /// in scalars of type `N`. Each entry in the R-tree is a key-value pair, where
@@ -765,7 +766,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn cosmic() -> Result<(), Box<dyn Error>> {
         let mut stars = RTree::<N32, 3, Vector<N32, 3>, StarInfo>::new(RTreeConfig {
             min_children: 4,
