@@ -7,6 +7,8 @@ pub mod filter;
 pub mod geom;
 pub mod intersects;
 mod iter;
+mod iter_stack;
+mod join;
 mod node;
 pub mod ranking;
 mod select;
@@ -293,6 +295,19 @@ where
         unsafe { iter::FilterSortedIterMut::new(self.height, &mut self.root, ranking) }
     }
 
+    pub fn join<'a, 'b, N1, const D1: usize, Key1, Value1, F>(
+        &'a self,
+        other: &'b RTree<N1, D1, Key1, Value1>,
+        filter: F,
+    ) -> join::JoinIter<'a, 'b, N, N1, D, D1, Key, Key1, Value, Value1, F>
+    where
+        N1: Ord + num_traits::Bounded + Clone + Sub<Output = N1> + Into<f64>,
+        Key1: Bounded<N1, D1> + Eq,
+        F: join::JoinFilter<N, N1, D, D1, Key, Key1>,
+    {
+        unsafe { join::JoinIter::new(filter, &self.root, self.height, &other.root, other.height) }
+    }
+
     // Inserts a new key-value pair into the R-tree, ignoring any existing
     // entries with the same key.
     pub fn insert(&mut self, key: Key, value: Value) {
@@ -419,6 +434,7 @@ where
 mod tests {
     use core::fmt;
     use std::cell::RefCell;
+    use std::collections::HashSet;
     use std::error::Error;
     use std::fs::File;
     extern crate test;
@@ -434,6 +450,8 @@ mod tests {
     use crate::filter::BoundedIntersectsFilter;
     use crate::geom::line::Line;
     use crate::geom::sphere::Sphere;
+    use crate::intersects::Intersects;
+    use crate::join::JoinFilter;
     use crate::ranking::EuclideanDistanceRanking;
     use crate::ranking::PointDistance;
     use crate::vector::Vector;
@@ -921,5 +939,59 @@ mod tests {
                 assert!(visited[x][y]);
             }
         }
+    }
+
+    #[test]
+    fn join() {
+        let mut tree0 = RTree::<i32, 2, Vector<i32, 2>, i32>::new(RTreeConfig {
+            max_children: 4,
+            min_children: 2,
+        });
+        let mut tree1 = RTree::<i32, 2, Vector<i32, 2>, i32>::new(RTreeConfig {
+            max_children: 4,
+            min_children: 2,
+        });
+
+        for x in 0..8 {
+            for y in 0..8 {
+                tree0.insert(Vector([x, y]), x * y);
+            }
+        }
+        for x in 4..20 {
+            for y in 4..20 {
+                tree1.insert(Vector([x, y]), x * y);
+            }
+        }
+
+        struct EqFilter;
+
+        impl<N, const D: usize, Key> JoinFilter<N, N, D, D, Key, Key> for EqFilter
+        where
+            N: Ord,
+            Key: Eq,
+        {
+            fn test_bounds(&self, bounds0: &Bounds<N, D>, bounds1: &Bounds<N, D>) -> bool {
+                bounds0.intersects(bounds1)
+            }
+
+            fn test_key(&self, key0: &Key, key1: &Key) -> bool {
+                key0 == key1
+            }
+        }
+
+        let mut visited = HashSet::new();
+        for ((key0, value0), (key1, value1)) in tree0.join(&tree1, EqFilter) {
+            assert!(
+                visited.insert(((*key0, *value0), (*key1, *value1))),
+                "Duplicate entry yielded"
+            );
+        }
+        let mut expected = HashSet::new();
+        for x in 4..8 {
+            for y in 4..8 {
+                expected.insert(((Vector([x, y]), x * y), (Vector([x, y]), x * y)));
+            }
+        }
+        assert_eq!(visited, expected);
     }
 }

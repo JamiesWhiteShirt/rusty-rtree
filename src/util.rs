@@ -1,3 +1,5 @@
+use std::{ptr::NonNull, slice};
+
 pub(crate) enum GetOnlyResult<T> {
     Multiple,
     Only(T),
@@ -18,4 +20,11 @@ pub(crate) fn get_only<I: Iterator>(mut iter: I) -> GetOnlyResult<I::Item> {
     } else {
         GetOnlyResult::None
     }
+}
+
+pub(crate) fn empty_slice<'a, T>() -> &'a mut [T] {
+    // SAFETY: For any type `T`, `NonNull::<T>::dangling().as_ptr()` is a valid
+    // pointer to an array of length 0. Because the slice is empty, it is safe to
+    // treat it as mutable and to assign it any lifetime.
+    unsafe { slice::from_raw_parts_mut(NonNull::<T>::dangling().as_ptr(), 0) }
 }

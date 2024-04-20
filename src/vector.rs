@@ -12,7 +12,7 @@ use crate::{
     intersects::Intersects,
 };
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Hash)]
 pub struct Vector<S, const D: usize>(pub [S; D]);
 
 impl<S, const D: usize> Eq for Vector<S, D> where S: Eq {}

@@ -3,73 +3,51 @@ use std::{
     cmp::{self, Reverse},
     collections::BinaryHeap,
     marker::PhantomData,
-    mem::ManuallyDrop,
-    ptr::NonNull,
+    num::NonZeroUsize,
     slice,
 };
 
 use crate::{
     bounds::Bounds,
     filter::{NoFilter, SpatialFilter},
+    iter_stack::IterStack,
     node::Node,
     ranking::Ranking,
+    util::empty_slice,
 };
-
-union IterLevel<'a, N, const D: usize, Key, Value> {
-    inner: ManuallyDrop<slice::Iter<'a, Node<N, D, Key, Value>>>,
-    leaf: ManuallyDrop<slice::Iter<'a, (Key, Value)>>,
-}
-
-fn empty_slice<'a, T>() -> &'a mut [T] {
-    // SAFETY: For any type `T`, `NonNull::<T>::dangling().as_ptr()` is a valid
-    // pointer to an array of length 0. Because the slice is empty, it is safe to
-    // treat it as mutable and to assign it any lifetime.
-    unsafe { slice::from_raw_parts_mut(NonNull::<T>::dangling().as_ptr(), 0) }
-}
 
 unsafe fn iter_init<'a, N, const D: usize, Key, Value, Q, F>(
     height: usize,
     root: &'a Node<N, D, Key, Value>,
     filter: &impl SpatialFilter<N, D, Q>,
-) -> Box<[IterLevel<'a, N, D, Key, Value>]>
+) -> Box<IterStack<slice::Iter<'a, (Key, Value)>, slice::Iter<'a, Node<N, D, Key, Value>>>>
 where
     Key: Borrow<Q>,
     Q: ?Sized,
 {
     if !filter.test_bounds(&root.bounds) {
-        return Box::new([]);
+        return IterStack::empty_box();
     }
 
-    let mut stack = Vec::with_capacity(height + 1);
     // Initialize the stack with empty iterators for each level of the tree
     // except the root. In the first iteration, all iterators but the root
     // will act as if they are exhausted, so the stack will be initialized
     // with true iterators starting from the root.
-    for level in 0..height {
-        stack.push(if level > 0 {
-            IterLevel {
-                inner: ManuallyDrop::new(empty_slice().iter()),
-            }
-        } else {
-            IterLevel {
-                leaf: ManuallyDrop::new(empty_slice().iter()),
-            }
-        })
-    }
-    stack.push(if height > 0 {
-        IterLevel {
-            inner: ManuallyDrop::new(root.inner_children().iter()),
-        }
+    let mut stack = IterStack::new_box(
+        empty_slice().iter(),
+        (0..height).map(|_| empty_slice().iter()),
+    );
+    if let Some(height) = NonZeroUsize::new(height) {
+        stack[height] = root.inner_children().iter();
     } else {
-        IterLevel {
-            leaf: ManuallyDrop::new(root.leaf_children().iter()),
-        }
-    });
-    stack.into_boxed_slice()
+        *stack.leaf_mut() = root.leaf_children().iter();
+    }
+
+    stack
 }
 
 fn iter_next<'a, N, const D: usize, Key, Value, Q, F>(
-    stack: &mut [IterLevel<'a, N, D, Key, Value>],
+    stack: &mut IterStack<slice::Iter<'a, (Key, Value)>, slice::Iter<'a, Node<N, D, Key, Value>>>,
     filter: &impl SpatialFilter<N, D, Q>,
 ) -> Option<(&'a Key, &'a Value)>
 where
@@ -79,28 +57,25 @@ where
 {
     let mut level = 0;
     while level < stack.len() {
-        if level == 0 {
-            if let Some(entry) =
-                (*unsafe { &mut stack[level].leaf }).find(|(key, _)| filter.test_key(key.borrow()))
-            {
-                return Some((&entry.0, &entry.1));
+        if let Some(nz_level) = NonZeroUsize::new(level) {
+            if let Some(node) = stack[nz_level].find(|node| filter.test_bounds(&node.bounds)) {
+                level -= 1;
+                if let Some(nz_level) = NonZeroUsize::new(level) {
+                    // SAFETY: The level is non-zero, so the node must be an inner node.
+                    stack[nz_level] = unsafe { node.inner_children() }.iter();
+                } else {
+                    // SAFETY: The level is zero, so the node must be a leaf node.
+                    *stack.leaf_mut() = unsafe { node.leaf_children() }.iter();
+                }
             } else {
                 level += 1;
             }
         } else {
-            if let Some(node) =
-                (*unsafe { &mut stack[level].inner }).find(|node| filter.test_bounds(&node.bounds))
+            if let Some(entry) = stack
+                .leaf_mut()
+                .find(|(key, _)| filter.test_key(key.borrow()))
             {
-                level -= 1;
-                stack[level] = if level == 0 {
-                    IterLevel {
-                        leaf: ManuallyDrop::new(unsafe { node.leaf_children() }.iter()),
-                    }
-                } else {
-                    IterLevel {
-                        inner: ManuallyDrop::new(unsafe { node.inner_children() }.iter()),
-                    }
-                };
+                return Some((&entry.0, &entry.1));
             } else {
                 level += 1;
             }
@@ -110,7 +85,7 @@ where
 }
 
 pub struct Iter<'a, N, const D: usize, Key, Value> {
-    stack: Box<[IterLevel<'a, N, D, Key, Value>]>,
+    stack: Box<IterStack<slice::Iter<'a, (Key, Value)>, slice::Iter<'a, Node<N, D, Key, Value>>>>,
 }
 
 impl<'a, N, const D: usize, Key, Value> Iter<'a, N, D, Key, Value> {
@@ -133,7 +108,7 @@ pub struct FilterIter<'a, N, const D: usize, Key, Value, Q, F>
 where
     Q: ?Sized,
 {
-    stack: Box<[IterLevel<'a, N, D, Key, Value>]>,
+    stack: Box<IterStack<slice::Iter<'a, (Key, Value)>, slice::Iter<'a, Node<N, D, Key, Value>>>>,
     filter: F,
     _phantom: PhantomData<Q>,
 }
@@ -166,54 +141,41 @@ where
     }
 }
 
-union IterLevelMut<'a, N, const D: usize, Key, Value> {
-    inner: ManuallyDrop<slice::IterMut<'a, Node<N, D, Key, Value>>>,
-    leaf: ManuallyDrop<slice::IterMut<'a, (Key, Value)>>,
-}
-
 unsafe fn iter_mut_init<'a, N, const D: usize, Key, Value, Q>(
     height: usize,
     root: &'a mut Node<N, D, Key, Value>,
     filter: &impl SpatialFilter<N, D, Q>,
-) -> Box<[IterLevelMut<'a, N, D, Key, Value>]>
+) -> Box<IterStack<slice::IterMut<'a, (Key, Value)>, slice::IterMut<'a, Node<N, D, Key, Value>>>>
 where
     Key: Borrow<Q>,
     Q: ?Sized,
 {
     if !filter.test_bounds(&root.bounds) {
-        return Box::new([]);
+        return IterStack::empty_box();
     }
 
-    let mut stack = Vec::with_capacity(height + 1);
     // Initialize the stack with empty iterators for each level of the tree
     // except the root. In the first iteration, all iterators but the root
     // will act as if they are exhausted, so the stack will be initialized
     // with true iterators starting from the root.
-    for level in 0..height {
-        stack.push(if level > 0 {
-            IterLevelMut {
-                inner: ManuallyDrop::new(empty_slice().iter_mut()),
-            }
-        } else {
-            IterLevelMut {
-                leaf: ManuallyDrop::new(empty_slice().iter_mut()),
-            }
-        })
-    }
-    stack.push(if height > 0 {
-        IterLevelMut {
-            inner: ManuallyDrop::new(root.inner_children_mut().iter_mut()),
-        }
+    let mut stack = IterStack::new_box(
+        empty_slice().iter_mut(),
+        (0..height).map(|_| empty_slice().iter_mut()),
+    );
+    if let Some(height) = NonZeroUsize::new(height) {
+        stack[height] = root.inner_children_mut().iter_mut();
     } else {
-        IterLevelMut {
-            leaf: ManuallyDrop::new(root.leaf_children_mut().iter_mut()),
-        }
-    });
-    stack.into_boxed_slice()
+        *stack.leaf_mut() = root.leaf_children_mut().iter_mut();
+    }
+
+    stack
 }
 
 fn iter_mut_next<'a, N, const D: usize, Key, Value, Q>(
-    stack: &mut [IterLevelMut<'a, N, D, Key, Value>],
+    stack: &mut IterStack<
+        slice::IterMut<'a, (Key, Value)>,
+        slice::IterMut<'a, Node<N, D, Key, Value>>,
+    >,
     filter: &impl SpatialFilter<N, D, Q>,
 ) -> Option<(&'a Key, &'a mut Value)>
 where
@@ -222,28 +184,25 @@ where
 {
     let mut level = 0;
     while level < stack.len() {
-        if level == 0 {
-            if let Some(entry) =
-                (*unsafe { &mut stack[level].leaf }).find(|(key, _)| filter.test_key(key.borrow()))
-            {
-                return Some((&entry.0, &mut entry.1));
+        if let Some(nz_level) = NonZeroUsize::new(level) {
+            if let Some(node) = stack[nz_level].find(|node| filter.test_bounds(&node.bounds)) {
+                level -= 1;
+                if let Some(nz_level) = NonZeroUsize::new(level) {
+                    // SAFETY: The level is non-zero, so the node must be an inner node.
+                    stack[nz_level] = unsafe { node.inner_children_mut() }.iter_mut();
+                } else {
+                    // SAFETY: The level is zero, so the node must be a leaf node.
+                    *stack.leaf_mut() = unsafe { node.leaf_children_mut() }.iter_mut();
+                }
             } else {
                 level += 1;
             }
         } else {
-            if let Some(node) =
-                (*unsafe { &mut stack[level].inner }).find(|node| filter.test_bounds(&node.bounds))
+            if let Some(entry) = stack
+                .leaf_mut()
+                .find(|(key, _)| filter.test_key(key.borrow()))
             {
-                level -= 1;
-                stack[level] = if level == 0 {
-                    IterLevelMut {
-                        leaf: ManuallyDrop::new(unsafe { node.leaf_children_mut() }.iter_mut()),
-                    }
-                } else {
-                    IterLevelMut {
-                        inner: ManuallyDrop::new(unsafe { node.inner_children_mut() }.iter_mut()),
-                    }
-                };
+                return Some((&mut entry.0, &mut entry.1));
             } else {
                 level += 1;
             }
@@ -253,7 +212,9 @@ where
 }
 
 pub struct IterMut<'a, N, const D: usize, Key, Value> {
-    stack: Box<[IterLevelMut<'a, N, D, Key, Value>]>,
+    stack: Box<
+        IterStack<slice::IterMut<'a, (Key, Value)>, slice::IterMut<'a, Node<N, D, Key, Value>>>,
+    >,
 }
 
 impl<'a, N, const D: usize, Key, Value> IterMut<'a, N, D, Key, Value> {
@@ -276,7 +237,9 @@ pub struct FilterIterMut<'a, N, const D: usize, Key, Value, Q, F>
 where
     Q: ?Sized,
 {
-    stack: Box<[IterLevelMut<'a, N, D, Key, Value>]>,
+    stack: Box<
+        IterStack<slice::IterMut<'a, (Key, Value)>, slice::IterMut<'a, Node<N, D, Key, Value>>>,
+    >,
     filter: F,
     _phantom: PhantomData<Q>,
 }
