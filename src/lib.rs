@@ -18,7 +18,7 @@ mod util;
 pub mod vector;
 
 use bounds::Bounded;
-use filter::SpatialFilter;
+use filter::{JoinFilter, SpatialFilter};
 use iter::FilterIter;
 use node::{Node, NodeOps, NodeRef, NodeRefMut, RootNodeRefMut};
 use ranking::Ranking;
@@ -308,7 +308,7 @@ where
         Q1: ?Sized,
         N1: Ord + num_traits::Bounded + Clone + Sub<Output = N1> + Into<f64>,
         Key1: Bounded<N1, D1> + Eq,
-        F: join::JoinFilter<N, N1, D, D1, Q0, Q1>,
+        F: JoinFilter<N, N1, D, D1, Q0, Q1>,
     {
         unsafe { join::JoinIter::new(filter, &self.root, self.height, &other.root, other.height) }
     }
@@ -453,10 +453,10 @@ mod tests {
 
     use crate::bounds::Bounded;
     use crate::filter::BoundedIntersectsFilter;
+    use crate::filter::JoinFilter;
     use crate::geom::line::Line;
     use crate::geom::sphere::Sphere;
     use crate::intersects::Intersects;
-    use crate::join::JoinFilter;
     use crate::ranking::EuclideanDistanceRanking;
     use crate::ranking::PointDistance;
     use crate::vector::Vector;

@@ -1,6 +1,6 @@
 use std::{borrow::Borrow, cmp, marker::PhantomData, num::NonZeroUsize, slice};
 
-use crate::{bounds::Bounds, iter_stack::IterStack, node::Node, util::empty_slice};
+use crate::{filter::JoinFilter, iter_stack::IterStack, node::Node, util::empty_slice};
 
 struct RewindableIter<'a, T> {
     slice: &'a [T],
@@ -53,16 +53,6 @@ impl<'a, 'b, T0, T1> Iterator for ProductIter<'a, 'b, T0, T1> {
         }
         None
     }
-}
-
-pub trait JoinFilter<N0, N1, const D0: usize, const D1: usize, Key0, Key1>
-where
-    Key0: ?Sized,
-    Key1: ?Sized,
-{
-    fn test_bounds(&self, bounds0: &Bounds<N0, D0>, bounds1: &Bounds<N1, D1>) -> bool;
-
-    fn test_key(&self, key0: &Key0, key1: &Key1) -> bool;
 }
 
 /// The iterator will simultaneously descend into both trees, joining the children of the nodes

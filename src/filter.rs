@@ -185,3 +185,30 @@ impl<N, const D: usize, Key> SpatialFilter<N, D, Key> for NoFilter {
         true
     }
 }
+
+/// A join filter for R-tree keys. In addition to testing pair of keys, join
+/// filters can also be used to prune the search space by testing pairs of
+/// bounds containing sets of keys.
+pub trait JoinFilter<N0, N1, const D0: usize, const D1: usize, Key0, Key1>
+where
+    Key0: ?Sized,
+    Key1: ?Sized,
+{
+    /// Returns `true` if a pair of keys contained by the given pair of bounds
+    /// could match the filter.
+    ///
+    /// If a pair of keys contained by the pair ofbounds could match the filter,
+    /// this must return `true`, otherwise pairs of keys matching the filter
+    /// would be pruned from the search. If no pair of keys contained by the
+    /// pair of bounds could match the filter, this should return `false`,
+    /// otherwise the filter will needlessly be applied to pairs of keys or
+    /// pairs of subsets of keys that cannot match the filter.
+    ///
+    /// When joining two R-trees, this is used to determine whether the children
+    /// of a pair of nodes should be joined or pruned. If this returns `false`,
+    /// the pair will be pruned and their children will not be joined.
+    fn test_bounds(&self, bounds0: &Bounds<N0, D0>, bounds1: &Bounds<N1, D1>) -> bool;
+
+    /// Returns `true` if the given pair of keys matches the filter.
+    fn test_key(&self, key0: &Key0, key1: &Key1) -> bool;
+}
