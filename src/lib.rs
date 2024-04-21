@@ -9,6 +9,7 @@ pub mod intersects;
 mod iter;
 mod iter_stack;
 mod join;
+mod join_2;
 mod node;
 pub mod ranking;
 mod select;
@@ -295,15 +296,19 @@ where
         unsafe { iter::FilterSortedIterMut::new(self.height, &mut self.root, ranking) }
     }
 
-    pub fn join<'a, 'b, N1, const D1: usize, Key1, Value1, F>(
+    pub fn join<'a, 'b, N1, const D1: usize, Key1, Value1, Q0, Q1, F>(
         &'a self,
         other: &'b RTree<N1, D1, Key1, Value1>,
         filter: F,
-    ) -> join::JoinIter<'a, 'b, N, N1, D, D1, Key, Key1, Value, Value1, F>
+    ) -> join::JoinIter<'a, 'b, N, N1, D, D1, Key, Key1, Value, Value1, Q0, Q1, F>
     where
+        Key: Borrow<Q0>,
+        Key1: Borrow<Q1>,
+        Q0: ?Sized,
+        Q1: ?Sized,
         N1: Ord + num_traits::Bounded + Clone + Sub<Output = N1> + Into<f64>,
         Key1: Bounded<N1, D1> + Eq,
-        F: join::JoinFilter<N, N1, D, D1, Key, Key1>,
+        F: join::JoinFilter<N, N1, D, D1, Q0, Q1>,
     {
         unsafe { join::JoinIter::new(filter, &self.root, self.height, &other.root, other.height) }
     }

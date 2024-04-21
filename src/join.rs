@@ -1,4 +1,4 @@
-use std::{cmp, num::NonZeroUsize, slice};
+use std::{borrow::Borrow, cmp, marker::PhantomData, num::NonZeroUsize, slice};
 
 use crate::{bounds::Bounds, iter_stack::IterStack, node::Node, util::empty_slice};
 
@@ -55,7 +55,11 @@ impl<'a, 'b, T0, T1> Iterator for ProductIter<'a, 'b, T0, T1> {
     }
 }
 
-pub trait JoinFilter<N0, N1, const D0: usize, const D1: usize, Key0, Key1> {
+pub trait JoinFilter<N0, N1, const D0: usize, const D1: usize, Key0, Key1>
+where
+    Key0: ?Sized,
+    Key1: ?Sized,
+{
     fn test_bounds(&self, bounds0: &Bounds<N0, D0>, bounds1: &Bounds<N1, D1>) -> bool;
 
     fn test_key(&self, key0: &Key0, key1: &Key1) -> bool;
@@ -77,9 +81,12 @@ pub struct JoinIter<
     Key1,
     Value0,
     Value1,
+    Q0,
+    Q1,
     Filter,
 > where
-    Filter: JoinFilter<N0, N1, D0, D1, Key0, Key1>,
+    Q0: ?Sized,
+    Q1: ?Sized,
 {
     stack: Box<
         IterStack<
@@ -90,12 +97,30 @@ pub struct JoinIter<
     padding0: usize,
     padding1: usize,
     filter: Filter,
+    _phantom: PhantomData<(&'a Q0, &'b Q1)>,
 }
 
-impl<'a, 'b, N0, N1, const D0: usize, const D1: usize, Key0, Key1, Value0, Value1, Filter>
-    JoinIter<'a, 'b, N0, N1, D0, D1, Key0, Key1, Value0, Value1, Filter>
+impl<
+        'a,
+        'b,
+        N0,
+        N1,
+        const D0: usize,
+        const D1: usize,
+        Key0,
+        Key1,
+        Value0,
+        Value1,
+        Q0,
+        Q1,
+        Filter,
+    > JoinIter<'a, 'b, N0, N1, D0, D1, Key0, Key1, Value0, Value1, Q0, Q1, Filter>
 where
-    Filter: JoinFilter<N0, N1, D0, D1, Key0, Key1>,
+    Key0: Borrow<Q0>,
+    Key1: Borrow<Q1>,
+    Q0: ?Sized,
+    Q1: ?Sized,
+    Filter: JoinFilter<N0, N1, D0, D1, Q0, Q1>,
 {
     /// Adds an iterator to the stack to join the nodes. If both nodes are of the same type, the
     /// iterator will join the children of both nodes. Otherwise, the iterator will join the
@@ -151,6 +176,7 @@ where
                 padding0: 0,
                 padding1: 0,
                 filter,
+                _phantom: PhantomData,
             };
         }
 
@@ -163,6 +189,7 @@ where
             padding0: height - height0,
             padding1: height - height1,
             filter,
+            _phantom: PhantomData,
         };
         // SAFETY: The levels are valid for the given nodes.
         unsafe {
@@ -173,10 +200,27 @@ where
     }
 }
 
-impl<'a, 'b, N0, N1, const D0: usize, const D1: usize, Key0, Key1, Value0, Value1, Filter> Iterator
-    for JoinIter<'a, 'b, N0, N1, D0, D1, Key0, Key1, Value0, Value1, Filter>
+impl<
+        'a,
+        'b,
+        N0,
+        N1,
+        const D0: usize,
+        const D1: usize,
+        Key0,
+        Key1,
+        Value0,
+        Value1,
+        Q0,
+        Q1,
+        Filter,
+    > Iterator for JoinIter<'a, 'b, N0, N1, D0, D1, Key0, Key1, Value0, Value1, Q0, Q1, Filter>
 where
-    Filter: JoinFilter<N0, N1, D0, D1, Key0, Key1>,
+    Key0: Borrow<Q0>,
+    Key1: Borrow<Q1>,
+    Q0: ?Sized,
+    Q1: ?Sized,
+    Filter: JoinFilter<N0, N1, D0, D1, Q0, Q1>,
 {
     type Item = (&'a (Key0, Value0), &'b (Key1, Value1));
 
@@ -211,11 +255,9 @@ where
                     level += 1;
                 }
             } else {
-                if let Some((node0, node1)) = self
-                    .stack
-                    .leaf_mut()
-                    .find(|(entry0, entry1)| self.filter.test_key(&entry0.0, &entry1.0))
-                {
+                if let Some((node0, node1)) = self.stack.leaf_mut().find(|(entry0, entry1)| {
+                    self.filter.test_key(&entry0.0.borrow(), &entry1.0.borrow())
+                }) {
                     return Some((node0, node1));
                 } else {
                     level += 1;
