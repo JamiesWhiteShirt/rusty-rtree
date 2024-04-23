@@ -1,4 +1,4 @@
-#![feature(test)]
+#![feature(test, ptr_metadata, layout_for_ptr)]
 
 pub mod bounds;
 pub mod contains;
@@ -9,9 +9,10 @@ pub mod intersects;
 mod iter;
 mod iter_stack;
 mod join;
-mod join_2;
+mod left_join;
 mod node;
 pub mod ranking;
+mod rc_mut;
 mod select;
 mod split;
 mod util;
@@ -19,7 +20,7 @@ pub mod vector;
 
 use bounds::Bounded;
 use filter::{JoinFilter, SpatialFilter};
-use iter::FilterIter;
+use iter::{FilterIter, TreeIter, TreeIterMut};
 use node::{Node, NodeOps, NodeRef, NodeRefMut, RootNodeRefMut};
 use ranking::Ranking;
 use std::{borrow::Borrow, fmt::Debug, ops::Sub};
@@ -139,12 +140,12 @@ where
     }
 
     /// Returns an iterator over all entries in the R-tree.
-    pub fn iter<'a>(&'a self) -> iter::Iter<'a, N, D, Key, Value> {
+    pub fn iter<'a>(&'a self) -> iter::Iter<Box<TreeIter<'a, N, D, Key, Value>>> {
         unsafe { iter::Iter::new(self.height, &self.root) }
     }
 
     /// Returns a mutable iterator over all entries in the R-tree.
-    pub fn iter_mut<'a>(&'a mut self) -> iter::IterMut<'a, N, D, Key, Value> {
+    pub fn iter_mut<'a>(&'a mut self) -> iter::IterMut<Box<TreeIterMut<'a, N, D, Key, Value>>> {
         unsafe { iter::IterMut::new(self.height, &mut self.root) }
     }
 
@@ -153,7 +154,7 @@ where
     pub fn filter_iter<'a, Q, Filter>(
         &'a self,
         filter: Filter,
-    ) -> FilterIter<'a, N, D, Key, Value, Q, Filter>
+    ) -> FilterIter<Box<TreeIter<'a, N, D, Key, Value>>, Q, Filter>
     where
         Key: Borrow<Q>,
         Q: ?Sized,
@@ -167,7 +168,7 @@ where
     pub fn filter_iter_mut<'a, Q, Filter: SpatialFilter<N, D, Q>>(
         &'a mut self,
         filter: Filter,
-    ) -> iter::FilterIterMut<'a, N, D, Key, Value, Q, Filter>
+    ) -> iter::FilterIterMut<Box<TreeIterMut<'a, N, D, Key, Value>>, Q, Filter>
     where
         Key: Borrow<Q>,
         Q: ?Sized,
@@ -313,6 +314,25 @@ where
         unsafe { join::JoinIter::new(filter, &self.root, self.height, &other.root, other.height) }
     }
 
+    pub fn left_join<'a, 'b, N1, const D1: usize, Key1, Value1, Q0, Q1, F>(
+        &'a self,
+        other: &'b RTree<N1, D1, Key1, Value1>,
+        filter: F,
+    ) -> left_join::LeftJoinIter<'a, 'b, N, N1, D, D1, Key, Key1, Value, Value1, Q0, Q1, F>
+    where
+        Key: Borrow<Q0>,
+        Key1: Borrow<Q1>,
+        Q0: ?Sized,
+        Q1: ?Sized,
+        N1: Ord + num_traits::Bounded + Clone + Sub<Output = N1> + Into<f64>,
+        Key1: Bounded<N1, D1> + Eq,
+        F: JoinFilter<N, N1, D, D1, Q0, Q1>,
+    {
+        unsafe {
+            left_join::LeftJoinIter::new(filter, &self.root, self.height, &other.root, other.height)
+        }
+    }
+
     // Inserts a new key-value pair into the R-tree, ignoring any existing
     // entries with the same key.
     pub fn insert(&mut self, key: Key, value: Value) {
@@ -415,7 +435,7 @@ where
     Key: Bounded<N, D> + Eq,
 {
     type Item = (&'a Key, &'a Value);
-    type IntoIter = iter::Iter<'a, N, D, Key, Value>;
+    type IntoIter = iter::Iter<Box<TreeIter<'a, N, D, Key, Value>>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
@@ -428,7 +448,7 @@ where
     Key: Bounded<N, D> + Eq,
 {
     type Item = (&'a Key, &'a mut Value);
-    type IntoIter = iter::IterMut<'a, N, D, Key, Value>;
+    type IntoIter = iter::IterMut<Box<TreeIterMut<'a, N, D, Key, Value>>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter_mut()
@@ -442,7 +462,12 @@ mod tests {
     use std::collections::HashSet;
     use std::error::Error;
     use std::fs::File;
+    use std::ops::Add;
+    use std::ops::Mul;
+    use std::ops::Sub;
     extern crate test;
+    use noisy_float::types::n64;
+    use noisy_float::types::N64;
     use rand::rngs::StdRng;
     use rand::Rng;
     use rand::SeedableRng;
@@ -948,53 +973,66 @@ mod tests {
 
     #[test]
     fn join() {
-        let mut tree0 = RTree::<i32, 2, Vector<i32, 2>, i32>::new(RTreeConfig {
-            max_children: 4,
-            min_children: 2,
-        });
-        let mut tree1 = RTree::<i32, 2, Vector<i32, 2>, i32>::new(RTreeConfig {
-            max_children: 4,
-            min_children: 2,
-        });
-
-        for x in 0..8 {
-            for y in 0..8 {
-                tree0.insert(Vector([x, y]), x * y);
+        let mut rng = StdRng::from_seed([
+            0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD,
+            0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
+            0xDE, 0xAD, 0xBE, 0xEF,
+        ]);
+        let tree0 = {
+            let mut tree = RTree::<i32, 2, Vector<i32, 2>, usize>::new(RTreeConfig {
+                max_children: 4,
+                min_children: 2,
+            });
+            for i in 0..50usize {
+                tree.insert(Vector([rng.gen_range(0..100), rng.gen_range(0..100)]), i);
             }
-        }
-        for x in 4..20 {
-            for y in 4..20 {
-                tree1.insert(Vector([x, y]), x * y);
+            tree
+        };
+        let tree1 = {
+            let mut tree = RTree::<i32, 2, Vector<i32, 2>, usize>::new(RTreeConfig {
+                max_children: 4,
+                min_children: 2,
+            });
+            for i in 0..50usize {
+                tree.insert(Vector([rng.gen_range(0..100), rng.gen_range(0..100)]), i);
             }
-        }
+            tree
+        };
 
-        struct EqFilter;
+        #[derive(Clone)]
+        struct DistanceFilter(N64);
 
-        impl<N, const D: usize, Key> JoinFilter<N, N, D, D, Key, Key> for EqFilter
+        impl<N, const D: usize> JoinFilter<N, N, D, D, Vector<N, D>, Vector<N, D>> for DistanceFilter
         where
-            N: Ord,
-            Key: Eq,
+            N: Ord + Clone + Add<Output = N> + Sub<Output = N> + Mul<Output = N> + Into<f64>,
         {
             fn test_bounds(&self, bounds0: &Bounds<N, D>, bounds1: &Bounds<N, D>) -> bool {
-                bounds0.intersects(bounds1)
+                bounds0.sq_dist_to(bounds1) < self.0 * self.0
             }
 
-            fn test_key(&self, key0: &Key, key1: &Key) -> bool {
-                key0 == key1
+            fn test_key(&self, key0: &Vector<N, D>, key1: &Vector<N, D>) -> bool {
+                n64((key0.clone() - key1.clone()).sq_mag().into()) < self.0 * self.0
             }
         }
+
+        let filter = DistanceFilter(n64(5.0));
 
         let mut visited = HashSet::new();
-        for ((key0, value0), (key1, value1)) in tree0.join(&tree1, EqFilter) {
-            assert!(
-                visited.insert(((*key0, *value0), (*key1, *value1))),
-                "Duplicate entry yielded"
-            );
+        for ((key0, value0), r_iter) in tree0.left_join(&tree1, filter.clone()) {
+            for (key1, value1) in r_iter {
+                assert!(
+                    visited.insert(((key0, value0), (key1, value1))),
+                    "{:?} was yielded twice",
+                    ((key0, value0), (key1, value1)),
+                );
+            }
         }
         let mut expected = HashSet::new();
-        for x in 4..8 {
-            for y in 4..8 {
-                expected.insert(((Vector([x, y]), x * y), (Vector([x, y]), x * y)));
+        for (key0, value0) in tree0.iter() {
+            for (key1, value1) in tree1.iter() {
+                if filter.test_key(key0, key1) {
+                    expected.insert(((key0, value0), (key1, value1)));
+                }
             }
         }
         assert_eq!(visited, expected);

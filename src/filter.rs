@@ -189,26 +189,66 @@ impl<N, const D: usize, Key> SpatialFilter<N, D, Key> for NoFilter {
 /// A join filter for R-tree keys. In addition to testing pair of keys, join
 /// filters can also be used to prune the search space by testing pairs of
 /// bounds containing sets of keys.
-pub trait JoinFilter<N0, N1, const D0: usize, const D1: usize, Key0, Key1>
+pub trait JoinFilter<NL, NR, const DL: usize, const DR: usize, KeyL, KeyR>
 where
-    Key0: ?Sized,
-    Key1: ?Sized,
+    KeyL: ?Sized,
+    KeyR: ?Sized,
 {
     /// Returns `true` if a pair of keys contained by the given pair of bounds
     /// could match the filter.
     ///
-    /// If a pair of keys contained by the pair ofbounds could match the filter,
-    /// this must return `true`, otherwise pairs of keys matching the filter
-    /// would be pruned from the search. If no pair of keys contained by the
-    /// pair of bounds could match the filter, this should return `false`,
+    /// If a pair of keys contained by the pair of bounds could match the
+    /// filter, this must return `true`, otherwise pairs of keys matching the
+    /// filter would be pruned from the search. If no pair of keys contained by
+    /// the pair of bounds could match the filter, this should return `false`,
     /// otherwise the filter will needlessly be applied to pairs of keys or
     /// pairs of subsets of keys that cannot match the filter.
     ///
     /// When joining two R-trees, this is used to determine whether the children
     /// of a pair of nodes should be joined or pruned. If this returns `false`,
     /// the pair will be pruned and their children will not be joined.
-    fn test_bounds(&self, bounds0: &Bounds<N0, D0>, bounds1: &Bounds<N1, D1>) -> bool;
+    fn test_bounds(&self, left: &Bounds<NL, DL>, right: &Bounds<NR, DR>) -> bool;
 
     /// Returns `true` if the given pair of keys matches the filter.
-    fn test_key(&self, key0: &Key0, key1: &Key1) -> bool;
+    fn test_key(&self, left: &KeyL, right: &KeyR) -> bool;
+}
+
+/// Matches keys matching a join with the given key and bounds. Used by joining
+/// iterators to filter for right keys that match a left key.
+pub struct JoiningFilter<'a, N, const D: usize, Key, Filter>
+where
+    Key: ?Sized,
+{
+    bounds: Bounds<N, D>,
+    key: &'a Key,
+    filter: Filter,
+}
+
+impl<'a, N, const D: usize, Key, Filter> JoiningFilter<'a, N, D, Key, Filter>
+where
+    Key: ?Sized + Bounded<N, D>,
+{
+    pub fn new(key: &'a Key, filter: Filter) -> Self {
+        Self {
+            bounds: key.bounds(),
+            key,
+            filter,
+        }
+    }
+}
+
+impl<'a, 'b, N0, N1, const D0: usize, const D1: usize, Key0, Key1, Filter>
+    SpatialFilter<N1, D1, Key1> for JoiningFilter<'a, N0, D0, Key0, Filter>
+where
+    Key0: ?Sized,
+    Key1: ?Sized,
+    Filter: JoinFilter<N0, N1, D0, D1, Key0, Key1>,
+{
+    fn test_bounds(&self, bounds: &Bounds<N1, D1>) -> bool {
+        self.filter.test_bounds(&self.bounds, bounds)
+    }
+
+    fn test_key(&self, key: &Key1) -> bool {
+        self.filter.test_key(self.key, key)
+    }
 }

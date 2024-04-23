@@ -4,6 +4,7 @@ use std::{
 };
 
 use array_init::from_iter;
+use itertools::izip;
 use noisy_float::types::{n64, N64};
 
 use crate::{
@@ -62,6 +63,46 @@ impl<N, const D: usize> Bounds<N, D> {
             res = Self::union(&res, &bounds);
         }
         res
+    }
+
+    pub fn volume(&self) -> N64
+    where
+        N: Clone + Sub<Output = N> + Into<f64>,
+    {
+        // TODO: Is there a better way to handle this constraint?
+        if D == 0 {
+            panic!("Cannot calculate volume of bounds with D = 0")
+        }
+
+        self.min
+            .zip(&self.max)
+            .map(|(min, max)| n64((max.clone() - min.clone()).into()))
+            .reduce(|acc, length| acc * length)
+            .unwrap()
+    }
+
+    pub fn sq_dist_to(&self, other: &Bounds<N, D>) -> N64
+    where
+        N: Clone + Sub<Output = N> + Into<f64>,
+    {
+        izip!(
+            self.min.0.iter(),
+            self.max.0.iter(),
+            other.min.0.iter(),
+            other.max.0.iter()
+        )
+        .map(|(lhs_min, lhs_max, rhs_min, rhs_max)| {
+            // If lhs < rhs, lhs_then_rhs is a positive number representing the distance between the two
+            let lhs_then_rhs = n64((rhs_min.clone() - lhs_max.clone()).into());
+            // If lhs > rhs, rhs_then_lhs is a positive number representing the distance between the two
+            let rhs_then_lhs = n64((lhs_min.clone() - lhs_max.clone()).into());
+
+            // The distance between the two bounds is the maximum of the two distances, or 0 if they overlap
+            let dist = cmp::max(cmp::max(lhs_then_rhs, rhs_then_lhs), n64(0.0));
+            dist * dist
+        })
+        .reduce(|acc, dist| acc + dist)
+        .unwrap()
     }
 }
 
@@ -145,24 +186,6 @@ where
 {
     fn contains(&self, point: &Vector<N, D>) -> bool {
         self.intersects(point)
-    }
-}
-
-impl<N, const D: usize> Bounds<N, D>
-where
-    N: Clone + Sub<Output = N> + Into<f64>,
-{
-    pub fn volume(&self) -> N64 {
-        // TODO: Is there a better way to handle this constraint?
-        if D == 0 {
-            panic!("Cannot calculate volume of bounds with D = 0")
-        }
-
-        self.min
-            .zip(&self.max)
-            .map(|(min, max)| n64((max.clone() - min.clone()).into()))
-            .reduce(|acc, length| acc * length)
-            .unwrap()
     }
 }
 

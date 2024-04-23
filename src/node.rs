@@ -79,7 +79,7 @@ union NodeChildren<N, const D: usize, Key, Value> {
 /// Like the level, the capacity is not stored in the Node, and is instead
 /// maintained by consistently using the same [`NodeOps`] to manipulate the
 /// Node.
-pub(crate) struct Node<N, const D: usize, Key, Value> {
+pub struct Node<N, const D: usize, Key, Value> {
     pub(crate) bounds: Bounds<N, D>,
     children: NodeChildren<N, D, Key, Value>,
 }
@@ -882,7 +882,7 @@ pub(crate) struct NodeContainer<N, const D: usize, Key, Value> {
 }
 
 impl<'a, N, const D: usize, Key, Value> NodeContainer<N, D, Key, Value> {
-    fn r#ref(&'a self) -> NodeRef<'a, N, D, Key, Value> {
+    fn borrow(&'a self) -> NodeRef<'a, N, D, Key, Value> {
         NodeRef {
             ops: self.ops,
             level: self.level,
@@ -890,7 +890,7 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<N, D, Key, Value> {
         }
     }
 
-    fn ref_mut(&'a mut self) -> NodeRefMut<'a, N, D, Key, Value> {
+    fn borrow_mut(&'a mut self) -> NodeRefMut<'a, N, D, Key, Value> {
         NodeRefMut {
             ops: self.ops,
             level: self.level,
@@ -943,7 +943,7 @@ impl<N, const D: usize, Key, Value> Drop for NodeContainer<N, D, Key, Value> {
     fn drop(&mut self) {
         // SAFETY: NodeContainer has exclusive ownership of self.node, so it is
         // safe to drop.
-        unsafe { self.ref_mut().drop() }
+        unsafe { self.borrow_mut().drop() }
     }
 }
 
@@ -954,7 +954,7 @@ where
     Value: Clone,
 {
     fn clone(&self) -> Self {
-        self.r#ref().clone()
+        self.borrow().clone()
     }
 }
 
@@ -967,7 +967,7 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Node")
             .field("bounds", &self.node.bounds)
-            .field("node", &self.r#ref().children())
+            .field("node", &self.borrow().children())
             .finish()
     }
 }
