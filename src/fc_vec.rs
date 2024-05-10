@@ -526,10 +526,10 @@ impl<'a, T> IntoIterator for &'a mut FCVecContainer<T> {
 }
 
 impl<T> FCVecContainer<T> {
-    /// Unwraps the FCVec from the container without dropping it. The returned
+    /// Leaks the FCVec from the container without dropping it. The returned
     /// FCVec can only be wrapped using the same [`Alloc`] that created the
     /// container.
-    pub(crate) fn unwrap(self) -> FCVec<T> {
+    pub(crate) fn leak(self) -> FCVec<T> {
         let data = unsafe { ptr::read(&self.data) };
         mem::forget(self);
         data

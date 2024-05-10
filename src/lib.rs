@@ -92,7 +92,7 @@ where
         let root = unsafe { ops.wrap_ref(&self.root, self.height) }.clone();
         RTree {
             height: self.height,
-            root: root.unwrap(),
+            root: root.leak(),
             config: self.config,
         }
     }
@@ -136,7 +136,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
         let ops = Alloc::new_alloc(config.min_children, config.max_children);
         return RTree {
             height: 0,
-            root: ops.empty_leaf().unwrap(),
+            root: ops.new_leaf().leak(),
             config,
         };
     }

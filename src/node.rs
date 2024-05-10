@@ -190,7 +190,7 @@ impl Alloc {
         }
     }
 
-    pub(crate) fn empty_leaf<B, Key, Value>(&self) -> NodeContainer<B, Key, Value>
+    pub(crate) fn new_leaf<B, Key, Value>(&self) -> NodeContainer<B, Key, Value>
     where
         B: Bounds,
     {
@@ -201,7 +201,7 @@ impl Alloc {
                 Node::new(
                     Bounds::empty(),
                     NodeChildren {
-                        leaf: ManuallyDrop::new(self.children.new().unwrap()),
+                        leaf: ManuallyDrop::new(self.children.new().leak()),
                     },
                     0,
                 ),
@@ -404,7 +404,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
                             Node::new(
                                 sibling_bounds,
                                 NodeChildren {
-                                    leaf: ManuallyDrop::new(sibling_children.unwrap()),
+                                    leaf: ManuallyDrop::new(sibling_children.leak()),
                                 },
                                 self.level,
                             ),
@@ -762,7 +762,7 @@ impl<'a, N, const D: usize, Key, Value> RootNodeRefMut<'a, AABB<N, D>, Key, Valu
             std::iter::repeat_with(|| None).take(*self.height).collect();
         if let Some(value) = self.node_ref_mut().remove(key, &mut |children| {
             let level = children.level();
-            reinsert_entries[level] = Some(children.unwrap());
+            reinsert_entries[level] = Some(children.leak());
         }) {
             self.try_unbranch();
 
@@ -821,13 +821,13 @@ impl<'a, B, Key, Value> RootNodeRefMut<'a, B, Key, Value> {
         // the level of the former root node plus one.
         unsafe {
             next_root_children.push(ptr::read(self.node));
-            next_root_children.push(sibling.unwrap());
+            next_root_children.push(sibling.leak());
             ptr::write(
                 self.node,
                 Node::new(
                     bounds,
                     NodeChildren {
-                        inner: ManuallyDrop::new(next_root_children.unwrap()),
+                        inner: ManuallyDrop::new(next_root_children.leak()),
                     },
                     *self.height + 1,
                 ),
@@ -865,7 +865,7 @@ impl<'a, B, Key, Value> RootNodeRefMut<'a, B, Key, Value> {
             unsafe {
                 self.node_ref_mut().drop();
             }
-            *self.node = new_root.unwrap();
+            *self.node = new_root.leak();
             *self.height -= 1;
         }
     }
@@ -924,10 +924,10 @@ impl<'a, B, Key, Value> NodeContainer<B, Key, Value> {
         }
     }
 
-    /// Unwraps the node from the container without dropping it. The returned
+    /// Returns the node from the container without dropping it. The returned
     /// node can only be wrapped again with the same level and [`Alloc`] that
     /// were used to create the container.
-    pub(crate) fn unwrap(self) -> Node<B, Key, Value> {
+    pub(crate) fn leak(self) -> Node<B, Key, Value> {
         // SAFETY: self.node is not read after being moved out of the
         // container - self is dropped immediately afterwards.
         let node = unsafe { ptr::read(&self.node) };
@@ -1043,7 +1043,7 @@ impl<'a, B, Key, Value> NodeRef<'a, B, Key, Value> {
         // are allocated by the same fc_vec::Alloc as `self`.
         unsafe {
             self.alloc
-                .wrap(Node::new(bounds, children.unwrap(), self.level), self.level)
+                .wrap(Node::new(bounds, children.leak(), self.level), self.level)
         }
     }
 
@@ -1161,13 +1161,13 @@ impl<'a, B, Key, Value> InnerNodeChildrenRef<'a, B, Key, Value> {
     {
         let mut clone_children = self.alloc.children.new();
         for child in self.iter() {
-            clone_children.push(child.clone().unwrap());
+            clone_children.push(child.clone().leak());
         }
 
         InnerNodeChildrenContainer {
             alloc: self.alloc,
             level: self.level,
-            children: clone_children.unwrap(),
+            children: clone_children.leak(),
         }
     }
 
@@ -1354,7 +1354,7 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
             panic!("Cannot push a node with the wrong level");
         }
         self.children_mut()
-            .try_push(node.unwrap())
+            .try_push(node.leak())
             // SAFETY: The level of a child of an inner node is always one less
             // than the level of the inner node. The children of an inner node
             // are allocated by the same Alloc as the inner node.
@@ -1380,7 +1380,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, AABB<N, D>, 
         let (new_bounds, sibling_bounds, sibling_children) = split::quadratic(
             self.alloc.min_children,
             self.children_mut(),
-            overflow_node.unwrap(),
+            overflow_node.leak(),
         );
         // SAFETY: sibling_children contains children of the same level as
         // self.children and overflow_node, at self.level - 1. They are
@@ -1391,7 +1391,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, AABB<N, D>, 
                 Node::new(
                     sibling_bounds,
                     NodeChildren {
-                        inner: ManuallyDrop::new(sibling_children.unwrap()),
+                        inner: ManuallyDrop::new(sibling_children.leak()),
                     },
                     self.level.get(),
                 ),
@@ -1462,7 +1462,7 @@ impl<B, Key, Value> IntoIterator for InnerNodeChildrenContainer<B, Key, Value> {
     fn into_iter(self) -> Self::IntoIter {
         let alloc = self.alloc;
         let level = self.level;
-        let children = self.unwrap();
+        let children = self.leak();
         InnerNodeChildrenIntoIter {
             alloc,
             level,
@@ -1499,11 +1499,11 @@ impl<'a, B, Key, Value> InnerNodeChildrenContainer<B, Key, Value> {
         }
     }
 
-    /// Unwraps the children from the container without dropping them. The
+    /// Returns the children from the container without dropping them. The
     /// returned children can only be wrapped again with the same level and
     /// [`Alloc`] that were used to create the container, and must be dropped
     /// to avoid memory leaks.
-    fn unwrap(self) -> FCVec<Node<B, Key, Value>> {
+    fn leak(self) -> FCVec<Node<B, Key, Value>> {
         // SAFETY: self.children is not read after being moved out of the
         // container - self is dropped immediately afterwards.
         let children = unsafe { ptr::read(&self.children) };
@@ -1572,17 +1572,17 @@ impl<B, Key, Value> NodeChildrenContainer<B, Key, Value> {
         }
     }
 
-    /// Unwraps the children from the container without dropping them. The
+    /// Returns the children from the container without dropping them. The
     /// returned children can only be wrapped again with the same level and
     /// [`Alloc`] that were used to create the container, and must be dropped
     /// to avoid memory leaks.
-    fn unwrap(self) -> NodeChildren<B, Key, Value> {
+    fn leak(self) -> NodeChildren<B, Key, Value> {
         match self {
             NodeChildrenContainer::Inner(children) => NodeChildren {
-                inner: ManuallyDrop::new(children.unwrap()),
+                inner: ManuallyDrop::new(children.leak()),
             },
             NodeChildrenContainer::Leaf(children) => NodeChildren {
-                leaf: ManuallyDrop::new(children.unwrap()),
+                leaf: ManuallyDrop::new(children.leak()),
             },
         }
     }
