@@ -1451,7 +1451,7 @@ where
     Value: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.r#ref().fmt(f)
+        self.borrow().fmt(f)
     }
 }
 
@@ -1478,12 +1478,12 @@ impl<'a, B, Key, Value> Drop for InnerNodeChildrenContainer<B, Key, Value> {
     fn drop(&mut self) {
         // SAFETY: InnerNodeChildrenContainer has exclusive ownership of
         // self.children, so it is safe to drop.
-        unsafe { self.ref_mut().drop() }
+        unsafe { self.borrow_mut().drop() }
     }
 }
 
 impl<'a, B, Key, Value> InnerNodeChildrenContainer<B, Key, Value> {
-    fn r#ref(&'a self) -> InnerNodeChildrenRef<'a, B, Key, Value> {
+    fn borrow(&'a self) -> InnerNodeChildrenRef<'a, B, Key, Value> {
         InnerNodeChildrenRef {
             alloc: self.alloc,
             level: self.level,
@@ -1491,7 +1491,7 @@ impl<'a, B, Key, Value> InnerNodeChildrenContainer<B, Key, Value> {
         }
     }
 
-    fn ref_mut(&'a mut self) -> InnerNodeChildrenRefMut<'a, B, Key, Value> {
+    fn borrow_mut(&'a mut self) -> InnerNodeChildrenRefMut<'a, B, Key, Value> {
         InnerNodeChildrenRefMut {
             alloc: self.alloc,
             level: self.level,
@@ -1553,7 +1553,7 @@ where
     Value: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.r#ref().fmt(f)
+        self.borrow().fmt(f)
     }
 }
 
@@ -1565,10 +1565,10 @@ impl<B, Key, Value> NodeChildrenContainer<B, Key, Value> {
         }
     }
 
-    fn r#ref(&self) -> NodeChildrenRef<B, Key, Value> {
+    fn borrow(&self) -> NodeChildrenRef<B, Key, Value> {
         match self {
-            NodeChildrenContainer::Inner(children) => NodeChildrenRef::Inner(children.r#ref()),
-            NodeChildrenContainer::Leaf(children) => NodeChildrenRef::Leaf(children.r#ref()),
+            NodeChildrenContainer::Inner(children) => NodeChildrenRef::Inner(children.borrow()),
+            NodeChildrenContainer::Leaf(children) => NodeChildrenRef::Leaf(children.borrow()),
         }
     }
 

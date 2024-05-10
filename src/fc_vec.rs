@@ -468,7 +468,7 @@ where
 impl<T> Drop for FCVecContainer<T> {
     fn drop(&mut self) {
         unsafe {
-            self.r#ref_mut().drop();
+            self.borrow_mut().drop();
         }
     }
 }
@@ -539,16 +539,16 @@ impl<T> FCVecContainer<T> {
         self.data.len()
     }
 
-    pub(crate) fn r#ref(&self) -> FCVecRef<T> {
+    pub(crate) fn borrow(&self) -> FCVecRef<T> {
         unsafe { self.ops.wrap_ref(&self.data) }
     }
 
-    pub(crate) fn r#ref_mut(&mut self) -> FCVecRefMut<T> {
+    pub(crate) fn borrow_mut(&mut self) -> FCVecRefMut<T> {
         unsafe { self.ops.wrap_ref_mut(&mut self.data) }
     }
 
     pub(crate) fn push(&mut self, value: T) {
-        self.r#ref_mut().push(value);
+        self.borrow_mut().push(value);
     }
 }
 
