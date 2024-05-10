@@ -22,7 +22,7 @@ use bounds::{Bounded, Bounds, AABB};
 use contains::Contains;
 use filter::{JoinFilter, SpatialFilter};
 use iter::{FilterIter, TreeIter, TreeIterMut};
-use node::{Node, NodeOps, NodeRef, NodeRefMut, RootNodeRefMut};
+use node::{Alloc, Node, NodeRef, NodeRefMut, RootNodeRefMut};
 use ranking::Ranking;
 use std::{borrow::Borrow, fmt::Debug, ops::Sub};
 
@@ -99,8 +99,8 @@ where
 }
 
 impl<B, Key, Value> RTree<B, Key, Value> {
-    fn ops(&self) -> NodeOps {
-        NodeOps::new_ops(self.config.min_children, self.config.max_children)
+    fn ops(&self) -> Alloc {
+        Alloc::new_alloc(self.config.min_children, self.config.max_children)
     }
 
     fn root_ref_mut(&mut self) -> RootNodeRefMut<B, Key, Value> {
@@ -133,7 +133,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
     where
         B: Bounds,
     {
-        let ops = NodeOps::new_ops(config.min_children, config.max_children);
+        let ops = Alloc::new_alloc(config.min_children, config.max_children);
         return RTree {
             height: 0,
             root: ops.empty_leaf().unwrap(),

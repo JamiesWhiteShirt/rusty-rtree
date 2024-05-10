@@ -8,8 +8,8 @@ use std::{
 };
 
 /// A fixed-capacity vector whose capacity and operations are defined by a
-/// [FCVecOps<T>]. Can be created via [FCVecOps<T>::new], and must be dropped
-/// with [FCVecOps<T>::drop] before it is disposed of.
+/// [Alloc<T>]. Can be created via [Alloc<T>::new], and must be dropped
+/// with [Alloc<T>::drop] before it is disposed of.
 pub(crate) struct FCVec<T> {
     buf: NonNull<T>,
     len: usize,
@@ -112,20 +112,20 @@ impl<'a, T> IntoIterator for &'a mut FCVec<T> {
 /// # Safety
 ///
 /// Operations are only safe on a given [FCVec<T>] if it was created by this
-/// [FCVecOps] with [FCVecOps::new].
+/// [Alloc] with [Alloc::new].
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct FCVecOps {
+pub(crate) struct Alloc {
     cap: usize,
 }
 
-impl FCVecOps {
-    /// Creates a new [FCVecOps] with the specified capacity and type of items.
-    pub(crate) fn new_ops(cap: usize) -> Self {
-        FCVecOps { cap }
+impl Alloc {
+    /// Creates a new [Alloc] with the specified capacity and type of items.
+    pub(crate) fn new_alloc(cap: usize) -> Self {
+        Alloc { cap }
     }
 
     /// Allocates an empty [FCVec<T>] with the capacity specified by this
-    /// FCVecOps in a safe [FCVecContainer<T>].
+    /// Alloc in a safe [FCVecContainer<T>].
     pub(crate) fn new<T>(&self) -> FCVecContainer<T> {
         let layout = alloc::Layout::array::<T>(self.cap).unwrap();
         let buf = match NonNull::new(unsafe { alloc::alloc(layout) } as *mut T) {
@@ -142,7 +142,7 @@ impl FCVecOps {
     ///
     /// # Safety
     ///
-    /// The given FCVec must have been created by this FCVecOps and must not
+    /// The given FCVec must have been created by this Alloc and must not
     /// have been dropped.
     pub(crate) unsafe fn wrap<T>(&self, vec: FCVec<T>) -> FCVecContainer<T> {
         FCVecContainer {
@@ -155,7 +155,7 @@ impl FCVecOps {
     ///
     /// # Safety
     ///
-    /// The given FCVec must have been created by this FCVecOps and must not
+    /// The given FCVec must have been created by this Alloc and must not
     /// have been dropped.
     pub(crate) unsafe fn wrap_ref<'a, T>(&self, vec: &'a FCVec<T>) -> FCVecRef<'a, T> {
         FCVecRef {
@@ -168,7 +168,7 @@ impl FCVecOps {
     ///
     /// # Safety
     ///
-    /// The given FCVec must have been created by this FCVecOps and must not
+    /// The given FCVec must have been created by this Alloc and must not
     /// have been dropped.
     pub(crate) unsafe fn wrap_ref_mut<'a, T>(&self, vec: &'a mut FCVec<T>) -> FCVecRefMut<'a, T> {
         FCVecRefMut {
@@ -179,7 +179,7 @@ impl FCVecOps {
 }
 
 pub(crate) struct FCVecRef<'a, T> {
-    ops: FCVecOps,
+    ops: Alloc,
     data: &'a FCVec<T>,
 }
 
@@ -242,7 +242,7 @@ impl<'a, T> IntoIterator for FCVecRef<'a, T> {
 }
 
 pub(crate) struct FCVecRefMut<'a, T> {
-    ops: FCVecOps,
+    ops: Alloc,
     data: &'a mut FCVec<T>,
 }
 
@@ -251,7 +251,7 @@ impl<'a, T> FCVecRefMut<'a, T> {
         self.data.len()
     }
 
-    pub(crate) fn ops(&self) -> &FCVecOps {
+    pub(crate) fn ops(&self) -> &Alloc {
         &self.ops
     }
 
@@ -450,7 +450,7 @@ impl<'a, T> IntoIterator for FCVecRefMut<'a, T> {
 
 pub(crate) struct FCVecContainer<T> {
     data: FCVec<T>,
-    ops: FCVecOps,
+    ops: Alloc,
 }
 
 impl<T> Debug for FCVecContainer<T>
@@ -527,7 +527,7 @@ impl<'a, T> IntoIterator for &'a mut FCVecContainer<T> {
 
 impl<T> FCVecContainer<T> {
     /// Unwraps the FCVec from the container without dropping it. The returned
-    /// FCVec can only be wrapped using the same [`FCVecOps`] that created the
+    /// FCVec can only be wrapped using the same [`Alloc`] that created the
     /// container.
     pub(crate) fn unwrap(self) -> FCVec<T> {
         let data = unsafe { ptr::read(&self.data) };

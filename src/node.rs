@@ -10,7 +10,7 @@ use std::{
 use crate::{
     bounds::{Bounded, Bounds, AABB},
     contains::Contains,
-    fc_vec::{self, FCVec, FCVecContainer, FCVecOps, FCVecRef, FCVecRefMut},
+    fc_vec::{self, FCVec, FCVecContainer, FCVecRef, FCVecRefMut},
     intersects::Intersects,
     select, split,
     util::{get_only, GetOnlyResult},
@@ -60,7 +60,7 @@ union NodeChildren<B, Key, Value> {
 ///
 /// Being non-self-describing makes Node a fundamentally unsafe type, but it may
 /// be used safely by wrapping it in a [`NodeContainer`], a [`NodeRef`] or a
-/// [`NodeRefMut`] using the [`NodeOps`] that created it. Wrapping the node
+/// [`NodeRefMut`] using the [`Alloc`] that created it. Wrapping the node
 /// requires knowledge of the implicit level of the node.
 ///
 /// Node does not implement [`Drop`], but to avoid leaks it must be dropped
@@ -75,10 +75,9 @@ union NodeChildren<B, Key, Value> {
 /// tree. A node with level zero is a leaf node, while a node with a positive
 /// level `l` is an inner node containing nodes with level `l - 1`.
 ///
-/// A Node also has a capacity determined by the [`NodeOps`] used to create it.
+/// A Node also has a capacity determined by the [`Alloc`] used to create it.
 /// Like the level, the capacity is not stored in the Node, and is instead
-/// maintained by consistently using the same [`NodeOps`] to manipulate the
-/// Node.
+/// maintained by consistently using the same [`Alloc`] to manipulate the Node.
 pub struct Node<B, Key, Value> {
     pub(crate) bounds: B,
     children: NodeChildren<B, Key, Value>,
@@ -178,15 +177,15 @@ where
 }
 
 #[derive(Copy, Clone)]
-pub(crate) struct NodeOps {
-    children: FCVecOps,
+pub(crate) struct Alloc {
+    children: fc_vec::Alloc,
     min_children: usize,
 }
 
-impl NodeOps {
-    pub(crate) fn new_ops(min_children: usize, max_children: usize) -> Self {
-        NodeOps {
-            children: FCVecOps::new_ops(max_children),
+impl Alloc {
+    pub(crate) fn new_alloc(min_children: usize, max_children: usize) -> Self {
+        Alloc {
+            children: fc_vec::Alloc::new_alloc(max_children),
             min_children,
         }
     }
@@ -213,7 +212,7 @@ impl NodeOps {
 
     /// Wraps a node with a provided level in a safe container that takes
     /// ownership of the node. The provided node must have been allocated by the
-    /// same FCVecOps and must not have been dropped.
+    /// same Alloc and must not have been dropped.
     ///
     /// # Safety
     ///
@@ -222,24 +221,24 @@ impl NodeOps {
     /// the implicit level of the node.
     ///
     /// The method should not be called with a node that has been allocated by a
-    /// different FCVecOps. It is undefined behavior to do so if the FCVecOps
-    /// have different `max_children` values, and it is a logic error to do so
-    /// the FCVecOps have different `min_children` values.
+    /// different Alloc. It is undefined behavior to do so if the Allocs have
+    /// different `max_children` values, and it is a logic error to do so if the
+    /// Allocs have different `min_children` values.
     unsafe fn wrap<B, Key, Value>(
         &self,
         node: Node<B, Key, Value>,
         level: usize,
     ) -> NodeContainer<B, Key, Value> {
         NodeContainer {
-            ops: *self,
+            alloc: *self,
             level,
             node,
         }
     }
 
     /// Borrows a node with a provided level in a safe reference. The provided
-    /// node must have been allocated by the same FCVecOps and must not have
-    /// been dropped.
+    /// node must have been allocated by the same Alloc and must not have been
+    /// dropped.
     ///
     /// # Safety
     ///
@@ -248,25 +247,24 @@ impl NodeOps {
     /// violated.
     ///
     /// The return value must not be used if this is called with a node that has
-    /// been allocated by a different FCVecOps. It is undefined behavior to do
-    /// so if the FCVecOps have different `max_children` values, and it is a
-    /// logic error to do so if the FCVecOps have different `min_children`
-    /// values.
+    /// been allocated by a different Alloc. It is undefined behavior to do so
+    /// if the Allocs have different `max_children` values, and it is a logic
+    /// error to do so if the Alloc have different `min_children` values.
     pub(crate) unsafe fn wrap_ref<'a, B, Key, Value>(
         &self,
         node: &'a Node<B, Key, Value>,
         level: usize,
     ) -> NodeRef<'a, B, Key, Value> {
         NodeRef {
-            ops: *self,
+            alloc: *self,
             level,
             node,
         }
     }
 
     /// Mutably borrows a node with a provided level in a safe reference. The
-    /// provided `node` must have been allocated by the same FCVecOps and must
-    /// not have been dropped.
+    /// provided `node` must have been allocated by the same Alloc and must not
+    /// have been dropped.
     ///
     /// # Safety
     ///
@@ -275,17 +273,16 @@ impl NodeOps {
     /// violated.
     ///
     /// The return value must not be used if this is called with a node that has
-    /// been allocated by a different FCVecOps. It is undefined behavior to do
-    /// so if the FCVecOps have different `max_children` values, and it is a
-    /// logic error to do so if the FCVecOps have different `min_children`
-    /// values.
+    /// been allocated by a different Alloc. It is undefined behavior to do so
+    /// if the Allocs have different `max_children` values, and it is a logic
+    /// error to do so if the Allocs have different `min_children` values.
     pub(crate) unsafe fn wrap_ref_mut<'a, B, Key, Value>(
         &self,
         node: &'a mut Node<B, Key, Value>,
         level: usize,
     ) -> NodeRefMut<'a, B, Key, Value> {
         NodeRefMut {
-            ops: *self,
+            alloc: *self,
             level,
             node,
         }
@@ -294,7 +291,7 @@ impl NodeOps {
     /// Mutably borrows the root node and height of a tree in a safe reference.
     /// This is a special case of `wrap_ref_mut` that can be used for operations
     /// that can change the height of the tree. The provided `node` must have
-    /// been allocated by the same FCVecOps and must not have been dropped.
+    /// been allocated by the same Alloc and must not have been dropped.
     ///
     /// The provided height is equal to the level of the root node. If the
     /// returned reference is used for operations that can change the height of
@@ -309,17 +306,16 @@ impl NodeOps {
     /// this condition is violated.
     ///
     /// The return value must not be used if this is called with a node that has
-    /// been allocated by a different FCVecOps. It is undefined behavior to do
-    /// so if the FCVecOps have different `max_children` values, and it is a
-    /// logic error to do so if the FCVecOps have different `min_children`
-    /// values.
+    /// been allocated by a different Alloc. It is undefined behavior to do so
+    /// if the Allocs have different `max_children` values, and it is a logic
+    /// error to do so if the Allocs have different `min_children` values.
     pub(crate) unsafe fn wrap_root_ref_mut<'a, B, Key, Value>(
         &self,
         node: &'a mut Node<B, Key, Value>,
         height: &'a mut usize,
     ) -> RootNodeRefMut<'a, B, Key, Value> {
         RootNodeRefMut {
-            ops: *self,
+            alloc: *self,
             height,
             node,
         }
@@ -328,7 +324,7 @@ impl NodeOps {
     /// Wraps the children of a node at a specified level in a safe container
     /// that takes ownership of the children, which will drop the children
     /// when dropped. The provided `children` must have been allocated by the
-    /// same `FCVecOps` and must not have been dropped.
+    /// same Alloc and must not have been dropped.
     ///
     /// # Safety
     ///
@@ -338,10 +334,10 @@ impl NodeOps {
     /// contained the children.
     ///
     /// The method should not be called with children that were contained by a
-    /// node that has been allocated by a different FCVecOps. It is undefined
-    /// behavior to do so if the FCVecOps have different `max_children`
-    /// values, and it is a logic error to do so if the FCVecOps have
-    /// different `min_children` values.
+    /// node that has been allocated by a different Alloc. It is undefined
+    /// behavior to do so if the Alloc have different `max_children` values,
+    /// and it is a logic error to do so if the Allocs have different
+    /// `min_children` values.
     unsafe fn wrap_children<B, Key, Value>(
         &self,
         children: NodeChildren<B, Key, Value>,
@@ -349,7 +345,7 @@ impl NodeOps {
     ) -> NodeChildrenContainer<B, Key, Value> {
         if let Some(level) = NonZeroUsize::new(level) {
             NodeChildrenContainer::Inner(InnerNodeChildrenContainer {
-                ops: *self,
+                alloc: *self,
                 level,
                 children: ManuallyDrop::into_inner(children.inner),
             })
@@ -360,7 +356,7 @@ impl NodeOps {
 }
 
 pub(crate) struct NodeRefMut<'a, B, Key, Value> {
-    ops: NodeOps,
+    alloc: Alloc,
     level: usize,
     node: &'a mut Node<B, Key, Value>,
 }
@@ -375,7 +371,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
         Key: Bounded<AABB<N, D>>,
     {
         let entry_bounds = entry.bounds();
-        let min_children = self.ops.min_children;
+        let min_children = self.alloc.min_children;
         match (self.children_mut(), entry) {
             (NodeChildrenRefMut::Inner(mut children), NodeEntry::Inner(entry)) => {
                 if children.level.get() - 1 != entry.level {
@@ -399,12 +395,12 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
                         split::quadratic(min_children, children, overflow_entry);
                     self.node.bounds = new_bounds;
                     // SAFETY: `sibling_children` is allocated by the same
-                    // FCVecOps as `children`. The level of the sibling node is
+                    // fc_vec::Alloc as `children`. The level of the sibling node is
                     // the same as the level of the current node. self.node is a
                     // leaf node, so the children of the sibling node are
                     // initialized as leaf children.
                     Some(unsafe {
-                        self.ops.wrap(
+                        self.alloc.wrap(
                             Node::new(
                                 sibling_bounds,
                                 NodeChildren {
@@ -536,7 +532,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
         Key: Bounded<AABB<N, D>> + Eq + Borrow<Q>,
         Q: Bounded<AABB<N, D>> + Eq + ?Sized,
     {
-        let min_children = self.ops.min_children;
+        let min_children = self.alloc.min_children;
         match self.children_mut() {
             NodeChildrenRefMut::Inner(mut children) => {
                 let mut i = children.len();
@@ -579,7 +575,7 @@ impl<'a, B, Key, Value> NodeRefMut<'a, B, Key, Value> {
     fn into_children_mut(self) -> NodeChildrenRefMut<'a, B, Key, Value> {
         if let Some(level) = NonZeroUsize::new(self.level) {
             NodeChildrenRefMut::Inner(InnerNodeChildrenRefMut {
-                ops: self.ops,
+                alloc: self.alloc,
                 level,
                 // SAFETY: The node is an inner node, so the children are
                 // initialized as inner children.
@@ -587,10 +583,12 @@ impl<'a, B, Key, Value> NodeRefMut<'a, B, Key, Value> {
             })
         } else {
             // SAFETY: The node is a leaf node, so the children are initialized
-            // as leaf children. `self.ops.children` was used to create the
+            // as leaf children. `self.alloc.children` was used to create the
             // node's children.
             NodeChildrenRefMut::Leaf(unsafe {
-                self.ops.children.wrap_ref_mut(&mut self.node.children.leaf)
+                self.alloc
+                    .children
+                    .wrap_ref_mut(&mut self.node.children.leaf)
             })
         }
     }
@@ -598,7 +596,7 @@ impl<'a, B, Key, Value> NodeRefMut<'a, B, Key, Value> {
     fn children_mut<'b>(&'b mut self) -> NodeChildrenRefMut<'b, B, Key, Value> {
         if let Some(level) = NonZeroUsize::new(self.level) {
             NodeChildrenRefMut::Inner(InnerNodeChildrenRefMut {
-                ops: self.ops,
+                alloc: self.alloc,
                 level,
                 // SAFETY: The node is an inner node, so the children are
                 // initialized as inner children.
@@ -606,10 +604,12 @@ impl<'a, B, Key, Value> NodeRefMut<'a, B, Key, Value> {
             })
         } else {
             // SAFETY: The node is a leaf node, so the children are initialized
-            // as leaf children. `self.ops.children` was used to create the
+            // as leaf children. `self.alloc.children` was used to create the
             // node's children.
             NodeChildrenRefMut::Leaf(unsafe {
-                self.ops.children.wrap_ref_mut(&mut self.node.children.leaf)
+                self.alloc
+                    .children
+                    .wrap_ref_mut(&mut self.node.children.leaf)
             })
         }
     }
@@ -708,7 +708,7 @@ impl<'a, B, Key, Value> From<&'a mut RootNodeRefMut<'_, B, Key, Value>>
 {
     fn from(root: &'a mut RootNodeRefMut<'_, B, Key, Value>) -> Self {
         NodeRefMut {
-            ops: root.ops,
+            alloc: root.alloc,
             level: *root.height,
             node: root.node,
         }
@@ -716,7 +716,7 @@ impl<'a, B, Key, Value> From<&'a mut RootNodeRefMut<'_, B, Key, Value>>
 }
 
 pub(crate) struct RootNodeRefMut<'a, B, Key, Value> {
-    ops: NodeOps,
+    alloc: Alloc,
     height: &'a mut usize,
     node: &'a mut Node<B, Key, Value>,
 }
@@ -771,9 +771,9 @@ impl<'a, N, const D: usize, Key, Value> RootNodeRefMut<'a, AABB<N, D>, Key, Valu
                     // SAFETY: The children in `reinsert_entries` are placed in
                     // the array such that the index of each child is equal to
                     // the level of the node that contained the children. All
-                    // children in the array are allocated by the same NodeOps
-                    // as the root.
-                    let entries = unsafe { self.ops.wrap_children(entries, level) };
+                    // children in the array are allocated by the same Alloc as
+                    // the root.
+                    let entries = unsafe { self.alloc.wrap_children(entries, level) };
                     match entries {
                         NodeChildrenContainer::Inner(children) => {
                             for entry in children {
@@ -809,7 +809,7 @@ impl<'a, B, Key, Value> RootNodeRefMut<'a, B, Key, Value> {
         }
 
         let bounds = B::union(&self.node.bounds, &sibling.node.bounds);
-        let mut next_root_children = self.ops.children.new();
+        let mut next_root_children = self.alloc.children.new();
         // The below operation redefines the root node to be an inner node that
         // contains the former root node and the provided sibling. This requires
         // moving the root into itself.
@@ -838,7 +838,7 @@ impl<'a, B, Key, Value> RootNodeRefMut<'a, B, Key, Value> {
 
     fn node_ref_mut<'b>(&'b mut self) -> NodeRefMut<'b, B, Key, Value> {
         NodeRefMut {
-            ops: self.ops,
+            alloc: self.alloc,
             level: *self.height,
             node: self.node,
         }
@@ -872,7 +872,7 @@ impl<'a, B, Key, Value> RootNodeRefMut<'a, B, Key, Value> {
 }
 
 pub(crate) struct NodeContainer<B, Key, Value> {
-    ops: NodeOps,
+    alloc: Alloc,
     level: usize,
     node: Node<B, Key, Value>,
 }
@@ -880,7 +880,7 @@ pub(crate) struct NodeContainer<B, Key, Value> {
 impl<'a, B, Key, Value> NodeContainer<B, Key, Value> {
     fn borrow(&self) -> NodeRef<B, Key, Value> {
         NodeRef {
-            ops: self.ops,
+            alloc: self.alloc,
             level: self.level,
             node: &self.node,
         }
@@ -888,7 +888,7 @@ impl<'a, B, Key, Value> NodeContainer<B, Key, Value> {
 
     fn borrow_mut(&mut self) -> NodeRefMut<B, Key, Value> {
         NodeRefMut {
-            ops: self.ops,
+            alloc: self.alloc,
             level: self.level,
             node: &mut self.node,
         }
@@ -896,7 +896,7 @@ impl<'a, B, Key, Value> NodeContainer<B, Key, Value> {
 
     fn children(self) -> NodeChildrenContainer<B, Key, Value> {
         let level = self.level;
-        let ops = self.ops;
+        let alloc = self.alloc;
         let node = {
             // SAFETY: self.node is not read after being moved out of the
             // container - self is dropped immediately afterwards.
@@ -906,7 +906,7 @@ impl<'a, B, Key, Value> NodeContainer<B, Key, Value> {
         };
         if let Some(level) = NonZeroUsize::new(level) {
             NodeChildrenContainer::Inner(InnerNodeChildrenContainer {
-                ops,
+                alloc,
                 level,
                 // SAFETY: The node is an inner node, so the children are
                 // initialized as inner children.
@@ -914,17 +914,18 @@ impl<'a, B, Key, Value> NodeContainer<B, Key, Value> {
             })
         } else {
             // SAFETY: The node is a leaf node, so the children are initialized
-            // as leaf children. `self.ops.children` was used to create the
+            // as leaf children. `self.alloc.children` was used to create the
             // node's children.
             NodeChildrenContainer::Leaf(unsafe {
-                ops.children
+                alloc
+                    .children
                     .wrap(ManuallyDrop::into_inner(node.children.leaf))
             })
         }
     }
 
     /// Unwraps the node from the container without dropping it. The returned
-    /// node can only be wrapped again with the same level and [`NodeOps`] that
+    /// node can only be wrapped again with the same level and [`Alloc`] that
     /// were used to create the container.
     pub(crate) fn unwrap(self) -> Node<B, Key, Value> {
         // SAFETY: self.node is not read after being moved out of the
@@ -969,7 +970,7 @@ where
 }
 
 pub(crate) struct NodeRef<'a, S, Key, Value> {
-    ops: NodeOps,
+    alloc: Alloc,
     level: usize,
     node: &'a Node<S, Key, Value>,
 }
@@ -978,7 +979,7 @@ impl<'a, B, Key, Value> NodeRef<'a, B, Key, Value> {
     pub(crate) fn children(&self) -> NodeChildrenRef<'a, B, Key, Value> {
         if let Some(level) = NonZeroUsize::new(self.level) {
             NodeChildrenRef::Inner(InnerNodeChildrenRef {
-                ops: self.ops,
+                alloc: self.alloc,
                 level,
                 // SAFETY: The node is an inner node, so the children are
                 // initialized as inner children.
@@ -986,9 +987,9 @@ impl<'a, B, Key, Value> NodeRef<'a, B, Key, Value> {
             })
         } else {
             // SAFETY: The node is a leaf node, so the children are initialized
-            // as leaf children. `self.ops.children` was used to create the
+            // as leaf children. `self.alloc.children` was used to create the
             // node's children.
-            NodeChildrenRef::Leaf(unsafe { self.ops.children.wrap_ref(&self.node.children.leaf) })
+            NodeChildrenRef::Leaf(unsafe { self.alloc.children.wrap_ref(&self.node.children.leaf) })
         }
     }
 
@@ -1039,9 +1040,9 @@ impl<'a, B, Key, Value> NodeRef<'a, B, Key, Value> {
         let children = self.children().clone();
         // SAFETY: `children` contains the same children as `self`, so the
         // level of the children is the same as the level of `self`. The clones
-        // are allocated by the same FCVecOps as `self`.
+        // are allocated by the same fc_vec::Alloc as `self`.
         unsafe {
-            self.ops
+            self.alloc
                 .wrap(Node::new(bounds, children.unwrap(), self.level), self.level)
         }
     }
@@ -1077,7 +1078,7 @@ impl<'a, B, Key, Value> NodeRef<'a, B, Key, Value> {
     pub(crate) fn _debug_assert_min_children(&self, is_root: bool) {
         let children = self.children();
         if !is_root {
-            assert!(children.len() >= self.ops.min_children);
+            assert!(children.len() >= self.alloc.min_children);
         }
         if let NodeChildrenRef::Inner(children) = children {
             for child in children {
@@ -1111,7 +1112,7 @@ where
 }
 
 pub(crate) struct InnerNodeChildrenRef<'a, B, Key, Value> {
-    ops: NodeOps,
+    alloc: Alloc,
     level: NonZeroUsize,
     children: &'a FCVec<Node<B, Key, Value>>,
 }
@@ -1121,7 +1122,7 @@ impl<'a, B, Key, Value> From<InnerNodeChildrenRefMut<'a, B, Key, Value>>
 {
     fn from(children: InnerNodeChildrenRefMut<'a, B, Key, Value>) -> Self {
         InnerNodeChildrenRef {
-            ops: children.ops,
+            alloc: children.alloc,
             level: children.level,
             children: children.children,
         }
@@ -1146,7 +1147,7 @@ impl<'a, B, Key, Value> InnerNodeChildrenRef<'a, B, Key, Value> {
 
     fn iter(&self) -> InnerNodeChildrenIter<'a, B, Key, Value> {
         InnerNodeChildrenIter {
-            ops: self.ops,
+            alloc: self.alloc,
             level: self.level,
             children: self.children.iter(),
         }
@@ -1158,13 +1159,13 @@ impl<'a, B, Key, Value> InnerNodeChildrenRef<'a, B, Key, Value> {
         Key: Clone,
         Value: Clone,
     {
-        let mut clone_children = self.ops.children.new();
+        let mut clone_children = self.alloc.children.new();
         for child in self.iter() {
             clone_children.push(child.clone().unwrap());
         }
 
         InnerNodeChildrenContainer {
-            ops: self.ops,
+            alloc: self.alloc,
             level: self.level,
             children: clone_children.unwrap(),
         }
@@ -1185,7 +1186,7 @@ impl<'a, B, Key, Value> InnerNodeChildrenRef<'a, B, Key, Value> {
 }
 
 pub(crate) struct InnerNodeChildrenIter<'a, B, Key, Value> {
-    ops: NodeOps,
+    alloc: Alloc,
     level: NonZeroUsize,
     children: slice::Iter<'a, Node<B, Key, Value>>,
 }
@@ -1196,7 +1197,7 @@ impl<'a, B, Key, Value> IntoIterator for InnerNodeChildrenRef<'a, B, Key, Value>
 
     fn into_iter(self) -> Self::IntoIter {
         InnerNodeChildrenIter {
-            ops: self.ops,
+            alloc: self.alloc,
             level: self.level,
             children: self.children.iter(),
         }
@@ -1211,8 +1212,8 @@ impl<'a, B, Key, Value> Iterator for InnerNodeChildrenIter<'a, B, Key, Value> {
             .next()
             // SAFETY: The level of a child of an inner node is always one less
             // than the level of the inner node. The children of an inner node
-            // are allocated by the same FCVecOps as the inner node.
-            .map(|node| unsafe { self.ops.wrap_ref(node, self.level.get() - 1) })
+            // are allocated by the same Alloc as the inner node.
+            .map(|node| unsafe { self.alloc.wrap_ref(node, self.level.get() - 1) })
     }
 }
 
@@ -1274,7 +1275,7 @@ impl<'a, B, Key, Value> NodeChildrenRef<'a, B, Key, Value> {
 }
 
 struct InnerNodeChildrenRefMut<'a, B, Key, Value> {
-    ops: NodeOps,
+    alloc: Alloc,
     level: NonZeroUsize,
     children: &'a mut FCVec<Node<B, Key, Value>>,
 }
@@ -1283,8 +1284,8 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
     fn children_mut(&mut self) -> FCVecRefMut<Node<B, Key, Value>> {
         // SAFETY: The level of a child of an inner node is always one less than
         // the level of the inner node. The children of an inner node are
-        // allocated by the same FCVecOps as the inner node.
-        unsafe { self.ops.children.wrap_ref_mut(self.children) }
+        // allocated by the same fc_vec::Alloc as the inner node.
+        unsafe { self.alloc.children.wrap_ref_mut(self.children) }
     }
 
     /// Drops the children of the node. After calling this method, the children
@@ -1314,9 +1315,9 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
     fn at_mut<'b>(&'b mut self, index: usize) -> NodeRefMut<'b, B, Key, Value> {
         // SAFETY: The level of a child of an inner node is always one less than
         // the level of the inner node. The children of an inner node are
-        // allocated by the same FCVecOps as the inner node.
+        // allocated by the same Alloc as the inner node.
         unsafe {
-            self.ops
+            self.alloc
                 .wrap_ref_mut(&mut self.children[index], self.level.get() - 1)
         }
     }
@@ -1325,13 +1326,13 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
         let child = self.children_mut().swap_remove(index);
         // SAFETY: The level of a child of an inner node is always one less than
         // the level of the inner node. The children of an inner node are
-        // allocated by the same FCVecOps as the inner node.
-        unsafe { self.ops.wrap(child, self.level.get() - 1) }
+        // allocated by the same Alloc as the inner node.
+        unsafe { self.alloc.wrap(child, self.level.get() - 1) }
     }
 
     fn iter<'b>(&'b self) -> InnerNodeChildrenIter<'b, B, Key, Value> {
         InnerNodeChildrenIter {
-            ops: self.ops,
+            alloc: self.alloc,
             level: self.level,
             children: self.children.iter(),
         }
@@ -1339,7 +1340,7 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
 
     fn iter_mut<'b>(&'b mut self) -> InnerNodeChildrenIterMut<'b, B, Key, Value> {
         InnerNodeChildrenIterMut {
-            ops: self.ops,
+            alloc: self.alloc,
             level: self.level,
             children: self.children.iter_mut(),
         }
@@ -1356,8 +1357,8 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
             .try_push(node.unwrap())
             // SAFETY: The level of a child of an inner node is always one less
             // than the level of the inner node. The children of an inner node
-            // are allocated by the same FCVecOps as the inner node.
-            .map(|node| unsafe { self.ops.wrap(node, self.level.get() - 1) })
+            // are allocated by the same Alloc as the inner node.
+            .map(|node| unsafe { self.alloc.wrap(node, self.level.get() - 1) })
     }
 }
 
@@ -1377,16 +1378,16 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, AABB<N, D>, 
             );
         }
         let (new_bounds, sibling_bounds, sibling_children) = split::quadratic(
-            self.ops.min_children,
+            self.alloc.min_children,
             self.children_mut(),
             overflow_node.unwrap(),
         );
         // SAFETY: sibling_children contains children of the same level as
         // self.children and overflow_node, at self.level - 1. They are
-        // allocated by the same NodeOps as self.children. The level of the
+        // allocated by the same Alloc as self.children. The level of the
         // sibling node is the same as the level of the current node.
         (new_bounds, unsafe {
-            self.ops.wrap(
+            self.alloc.wrap(
                 Node::new(
                     sibling_bounds,
                     NodeChildren {
@@ -1401,7 +1402,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, AABB<N, D>, 
 }
 
 struct InnerNodeChildrenIterMut<'a, B, Key, Value> {
-    ops: NodeOps,
+    alloc: Alloc,
     level: NonZeroUsize,
     children: slice::IterMut<'a, Node<B, Key, Value>>,
 }
@@ -1412,7 +1413,7 @@ impl<'a, B, Key, Value> IntoIterator for InnerNodeChildrenRefMut<'a, B, Key, Val
 
     fn into_iter(self) -> Self::IntoIter {
         InnerNodeChildrenIterMut {
-            ops: self.ops,
+            alloc: self.alloc,
             level: self.level,
             children: self.children.iter_mut(),
         }
@@ -1427,8 +1428,8 @@ impl<'a, B, Key, Value> Iterator for InnerNodeChildrenIterMut<'a, B, Key, Value>
             .next()
             // SAFETY: The level of a child of an inner node is always one less
             // than the level of the inner node. The children of an inner node
-            // are allocated by the same NodeOps as the inner node.
-            .map(|node| unsafe { self.ops.wrap_ref_mut(node, self.level.get() - 1) })
+            // are allocated by the same Alloc as the inner node.
+            .map(|node| unsafe { self.alloc.wrap_ref_mut(node, self.level.get() - 1) })
     }
 }
 
@@ -1438,7 +1439,7 @@ enum NodeChildrenRefMut<'a, B, Key, Value> {
 }
 
 struct InnerNodeChildrenContainer<B, Key, Value> {
-    ops: NodeOps,
+    alloc: Alloc,
     level: NonZeroUsize,
     children: FCVec<Node<B, Key, Value>>,
 }
@@ -1459,16 +1460,16 @@ impl<B, Key, Value> IntoIterator for InnerNodeChildrenContainer<B, Key, Value> {
     type IntoIter = InnerNodeChildrenIntoIter<B, Key, Value>;
 
     fn into_iter(self) -> Self::IntoIter {
-        let ops = self.ops;
+        let alloc = self.alloc;
         let level = self.level;
         let children = self.unwrap();
         InnerNodeChildrenIntoIter {
-            ops,
+            alloc,
             level,
             // SAFETY: The level of a child of an inner node is always one less
             // than the level of the inner node. The children vector of an inner
-            // node are allocated by the same FCVecOps as the inner node.
-            children: unsafe { ops.children.wrap(children) }.into_iter(),
+            // node are allocated by the same fc_vec::Alloc as the inner node.
+            children: unsafe { alloc.children.wrap(children) }.into_iter(),
         }
     }
 }
@@ -1484,7 +1485,7 @@ impl<'a, B, Key, Value> Drop for InnerNodeChildrenContainer<B, Key, Value> {
 impl<'a, B, Key, Value> InnerNodeChildrenContainer<B, Key, Value> {
     fn r#ref(&'a self) -> InnerNodeChildrenRef<'a, B, Key, Value> {
         InnerNodeChildrenRef {
-            ops: self.ops,
+            alloc: self.alloc,
             level: self.level,
             children: &self.children,
         }
@@ -1492,7 +1493,7 @@ impl<'a, B, Key, Value> InnerNodeChildrenContainer<B, Key, Value> {
 
     fn ref_mut(&'a mut self) -> InnerNodeChildrenRefMut<'a, B, Key, Value> {
         InnerNodeChildrenRefMut {
-            ops: self.ops,
+            alloc: self.alloc,
             level: self.level,
             children: &mut self.children,
         }
@@ -1500,7 +1501,7 @@ impl<'a, B, Key, Value> InnerNodeChildrenContainer<B, Key, Value> {
 
     /// Unwraps the children from the container without dropping them. The
     /// returned children can only be wrapped again with the same level and
-    /// [`NodeOps`] that were used to create the container, and must be dropped
+    /// [`Alloc`] that were used to create the container, and must be dropped
     /// to avoid memory leaks.
     fn unwrap(self) -> FCVec<Node<B, Key, Value>> {
         // SAFETY: self.children is not read after being moved out of the
@@ -1512,7 +1513,7 @@ impl<'a, B, Key, Value> InnerNodeChildrenContainer<B, Key, Value> {
 }
 
 struct InnerNodeChildrenIntoIter<B, Key, Value> {
-    ops: NodeOps,
+    alloc: Alloc,
     level: NonZeroUsize,
     children: fc_vec::IntoIter<Node<B, Key, Value>>,
 }
@@ -1525,8 +1526,8 @@ impl<B, Key, Value> Iterator for InnerNodeChildrenIntoIter<B, Key, Value> {
             .next()
             // SAFETY: The level of a child of an inner node is always one less
             // than the level of the inner node. The children of an inner node
-            // are allocated by the same NodeOps as the inner node.
-            .map(|node| unsafe { self.ops.wrap(node, self.level.get() - 1) })
+            // are allocated by the same Alloc as the inner node.
+            .map(|node| unsafe { self.alloc.wrap(node, self.level.get() - 1) })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -1573,7 +1574,7 @@ impl<B, Key, Value> NodeChildrenContainer<B, Key, Value> {
 
     /// Unwraps the children from the container without dropping them. The
     /// returned children can only be wrapped again with the same level and
-    /// [`NodeOps`] that were used to create the container, and must be dropped
+    /// [`Alloc`] that were used to create the container, and must be dropped
     /// to avoid memory leaks.
     fn unwrap(self) -> NodeChildren<B, Key, Value> {
         match self {
