@@ -1,13 +1,9 @@
-use crate::{
-    bounds::{Bounded, Bounds},
-    contains::Contains,
-    intersects::Intersects,
-};
+use crate::{bounds::Bounded, contains::Contains, intersects::Intersects};
 
 /// A spatial search filter for R-tree keys. In addition to testing individual
 /// keys, spatial filters can also be used to prune the search space by testing
 /// bounds containing sets of keys.
-pub trait SpatialFilter<N, const D: usize, Key>
+pub trait SpatialFilter<B, Key>
 where
     Key: ?Sized,
 {
@@ -24,7 +20,7 @@ where
     /// contents of an R-tree node should be tested against the filter or
     /// pruned. If this returns `false`, the node will be pruned and its
     /// children will not be tested.
-    fn test_bounds(&self, bounds: &Bounds<N, D>) -> bool;
+    fn test_bounds(&self, bounds: &B) -> bool;
 
     /// Returns `true` if the given key matches the filter.
     fn test_key(&self, key: &Key) -> bool;
@@ -43,12 +39,11 @@ impl<S> IntersectsFilter<S> {
     }
 }
 
-impl<N, const D: usize, S, Key> SpatialFilter<N, D, Key> for IntersectsFilter<S>
+impl<B, S, Key> SpatialFilter<B, Key> for IntersectsFilter<S>
 where
-    N: Ord,
-    S: Intersects<Bounds<N, D>> + Intersects<Key>,
+    S: Intersects<B> + Intersects<Key>,
 {
-    fn test_bounds(&self, bounds: &Bounds<N, D>) -> bool {
+    fn test_bounds(&self, bounds: &B) -> bool {
         self.space.intersects(bounds)
     }
 
@@ -64,24 +59,18 @@ where
 /// intersection with other bounds. This limits the accuracy of the filter's
 /// bounds test, but may be more efficient in cases where testing for
 /// intersection between the space and bounds is expensive.
-pub struct BoundedIntersectsFilter<N, const D: usize, S>
-where
-    N: Ord,
-{
-    bounds: Bounds<N, D>,
+pub struct BoundedIntersectsFilter<B, S> {
+    bounds: B,
     space: S,
 }
 
-impl<N, const D: usize, S> BoundedIntersectsFilter<N, D, S>
+impl<B, S> BoundedIntersectsFilter<B, S>
 where
-    N: Ord,
+    S: Bounded<B>,
 {
     /// Creates a new filter that matches keys that intersect the given space
     /// using the space's bounds for intersection testing with other bounds.
-    pub fn new_bounded(space: S) -> Self
-    where
-        S: Bounded<N, D>,
-    {
+    pub fn new_bounded(space: S) -> Self {
         Self {
             bounds: space.bounds(),
             space,
@@ -89,12 +78,12 @@ where
     }
 }
 
-impl<N, const D: usize, S, Key> SpatialFilter<N, D, Key> for BoundedIntersectsFilter<N, D, S>
+impl<B, S, Key> SpatialFilter<B, Key> for BoundedIntersectsFilter<B, S>
 where
-    N: Ord,
+    B: Intersects<B>,
     S: Intersects<Key>,
 {
-    fn test_bounds(&self, bounds: &Bounds<N, D>) -> bool {
+    fn test_bounds(&self, bounds: &B) -> bool {
         self.bounds.intersects(bounds)
     }
 
@@ -116,12 +105,12 @@ impl<S> ContainsFilter<S> {
     }
 }
 
-impl<N, const D: usize, S, Key> SpatialFilter<N, D, Key> for ContainsFilter<S>
+impl<B, S, Key> SpatialFilter<B, Key> for ContainsFilter<S>
 where
-    N: Ord,
-    S: Intersects<Bounds<N, D>> + Contains<Key>,
+    B: Intersects<B>,
+    S: Intersects<B> + Contains<Key>,
 {
-    fn test_bounds(&self, bounds: &Bounds<N, D>) -> bool {
+    fn test_bounds(&self, bounds: &B) -> bool {
         self.space.intersects(bounds)
     }
 
@@ -137,19 +126,14 @@ where
 /// intersection with other bounds. This limits the accuracy of the filter's
 /// bounds test, but may be more efficient in cases where testing for
 /// intersection between the space and bounds is expensive.
-pub struct BoundedContainsFilter<N, const D: usize, S>
-where
-    N: Ord,
-    S: Bounded<N, D>,
-{
-    bounds: Bounds<N, D>,
+pub struct BoundedContainsFilter<B, S> {
+    bounds: B,
     space: S,
 }
 
-impl<N, const D: usize, S> BoundedContainsFilter<N, D, S>
+impl<B, S> BoundedContainsFilter<B, S>
 where
-    N: Ord,
-    S: Bounded<N, D>,
+    S: Bounded<B>,
 {
     pub fn new_bounded(space: S) -> Self {
         Self {
@@ -159,12 +143,12 @@ where
     }
 }
 
-impl<N, const D: usize, S, Key> SpatialFilter<N, D, Key> for BoundedContainsFilter<N, D, S>
+impl<B, S, Key> SpatialFilter<B, Key> for BoundedContainsFilter<B, S>
 where
-    N: Ord,
-    S: Bounded<N, D> + Contains<Key>,
+    B: Intersects<B>,
+    S: Contains<Key>,
 {
-    fn test_bounds(&self, bounds: &Bounds<N, D>) -> bool {
+    fn test_bounds(&self, bounds: &B) -> bool {
         self.bounds.intersects(bounds)
     }
 
@@ -176,8 +160,8 @@ where
 /// Matches all keys.
 pub struct NoFilter;
 
-impl<N, const D: usize, Key> SpatialFilter<N, D, Key> for NoFilter {
-    fn test_bounds(&self, _: &Bounds<N, D>) -> bool {
+impl<B, Key> SpatialFilter<B, Key> for NoFilter {
+    fn test_bounds(&self, _: &B) -> bool {
         true
     }
 
@@ -189,7 +173,7 @@ impl<N, const D: usize, Key> SpatialFilter<N, D, Key> for NoFilter {
 /// A join filter for R-tree keys. In addition to testing pair of keys, join
 /// filters can also be used to prune the search space by testing pairs of
 /// bounds containing sets of keys.
-pub trait JoinFilter<NL, NR, const DL: usize, const DR: usize, KeyL, KeyR>
+pub trait JoinFilter<BL, BR, KeyL, KeyR>
 where
     KeyL: ?Sized,
     KeyR: ?Sized,
@@ -207,7 +191,7 @@ where
     /// When joining two R-trees, this is used to determine whether the children
     /// of a pair of nodes should be joined or pruned. If this returns `false`,
     /// the pair will be pruned and their children will not be joined.
-    fn test_bounds(&self, left: &Bounds<NL, DL>, right: &Bounds<NR, DR>) -> bool;
+    fn test_bounds(&self, left: &BL, right: &BR) -> bool;
 
     /// Returns `true` if the given pair of keys matches the filter.
     fn test_key(&self, left: &KeyL, right: &KeyR) -> bool;
@@ -215,18 +199,18 @@ where
 
 /// Matches keys matching a join with the given key and bounds. Used by joining
 /// iterators to filter for right keys that match a left key.
-pub struct JoiningFilter<'a, N, const D: usize, Key, Filter>
+pub struct JoiningFilter<'a, B, Key, Filter>
 where
     Key: ?Sized,
 {
-    bounds: Bounds<N, D>,
+    bounds: B,
     key: &'a Key,
     filter: Filter,
 }
 
-impl<'a, N, const D: usize, Key, Filter> JoiningFilter<'a, N, D, Key, Filter>
+impl<'a, B, Key, Filter> JoiningFilter<'a, B, Key, Filter>
 where
-    Key: ?Sized + Bounded<N, D>,
+    Key: ?Sized + Bounded<B>,
 {
     pub fn new(key: &'a Key, filter: Filter) -> Self {
         Self {
@@ -237,14 +221,14 @@ where
     }
 }
 
-impl<'a, 'b, N0, N1, const D0: usize, const D1: usize, Key0, Key1, Filter>
-    SpatialFilter<N1, D1, Key1> for JoiningFilter<'a, N0, D0, Key0, Filter>
+impl<'a, 'b, BL, BR, Key0, Key1, Filter> SpatialFilter<BR, Key1>
+    for JoiningFilter<'a, BL, Key0, Filter>
 where
     Key0: ?Sized,
     Key1: ?Sized,
-    Filter: JoinFilter<N0, N1, D0, D1, Key0, Key1>,
+    Filter: JoinFilter<BL, BR, Key0, Key1>,
 {
-    fn test_bounds(&self, bounds: &Bounds<N1, D1>) -> bool {
+    fn test_bounds(&self, bounds: &BR) -> bool {
         self.filter.test_bounds(&self.bounds, bounds)
     }
 

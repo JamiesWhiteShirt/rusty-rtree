@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    bounds::{Bounded, Bounds},
+    bounds::{Bounded, Bounds, AABB},
     contains::Contains,
     fc_vec::{self, FCVec, FCVecContainer, FCVecOps, FCVecRef, FCVecRefMut},
     intersects::Intersects,
@@ -16,12 +16,12 @@ use crate::{
     util::{get_only, GetOnlyResult},
 };
 
-pub(crate) enum NodeEntry<N, const D: usize, Key, Value> {
-    Inner(NodeContainer<N, D, Key, Value>),
+pub(crate) enum NodeEntry<B, Key, Value> {
+    Inner(NodeContainer<B, Key, Value>),
     Leaf((Key, Value)),
 }
 
-impl<N, const D: usize, Key, Value> NodeEntry<N, D, Key, Value> {
+impl<B, Key, Value> NodeEntry<B, Key, Value> {
     fn target_level(&self) -> usize {
         match self {
             NodeEntry::Inner(node) => node.level + 1,
@@ -30,12 +30,12 @@ impl<N, const D: usize, Key, Value> NodeEntry<N, D, Key, Value> {
     }
 }
 
-impl<N, const D: usize, Key, Value> Bounded<N, D> for NodeEntry<N, D, Key, Value>
+impl<B, Key, Value> Bounded<B> for NodeEntry<B, Key, Value>
 where
-    N: Clone,
-    Key: Bounded<N, D>,
+    B: Clone,
+    Key: Bounded<B>,
 {
-    fn bounds(&self) -> Bounds<N, D> {
+    fn bounds(&self) -> B {
         match self {
             NodeEntry::Inner(node_container) => node_container.node.bounds(),
             NodeEntry::Leaf((key, _)) => key.bounds(),
@@ -43,8 +43,8 @@ where
     }
 }
 
-union NodeChildren<N, const D: usize, Key, Value> {
-    inner: ManuallyDrop<FCVec<Node<N, D, Key, Value>>>,
+union NodeChildren<B, Key, Value> {
+    inner: ManuallyDrop<FCVec<Node<B, Key, Value>>>,
     leaf: ManuallyDrop<FCVec<(Key, Value)>>,
 }
 
@@ -79,12 +79,12 @@ union NodeChildren<N, const D: usize, Key, Value> {
 /// Like the level, the capacity is not stored in the Node, and is instead
 /// maintained by consistently using the same [`NodeOps`] to manipulate the
 /// Node.
-pub struct Node<N, const D: usize, Key, Value> {
-    pub(crate) bounds: Bounds<N, D>,
-    children: NodeChildren<N, D, Key, Value>,
+pub struct Node<B, Key, Value> {
+    pub(crate) bounds: B,
+    children: NodeChildren<B, Key, Value>,
 }
 
-impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
+impl<B, Key, Value> Node<B, Key, Value> {
     /// Creates a new node. The bounds must be the union of the bounds of the
     /// children. It is a logic error to create a node with bounds that are not
     /// the union of the bounds of the children.
@@ -100,11 +100,7 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
     /// `children` must be leaf children. If `_level` > 0, `children` must be
     /// inner children containing nodes whose level is `_level - 1`. It is
     /// undefined behavior to violate these conditions.
-    unsafe fn new(
-        bounds: Bounds<N, D>,
-        children: NodeChildren<N, D, Key, Value>,
-        _level: usize,
-    ) -> Self {
+    unsafe fn new(bounds: B, children: NodeChildren<B, Key, Value>, _level: usize) -> Self {
         Node { bounds, children }
     }
 
@@ -116,7 +112,7 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
     ///
     /// The node must be an inner node (a node with level > 0). It is undefined
     /// behavior to call this method on a leaf node.
-    pub(crate) unsafe fn inner_children(&self) -> &FCVec<Node<N, D, Key, Value>> {
+    pub(crate) unsafe fn inner_children(&self) -> &FCVec<Node<B, Key, Value>> {
         // SAFETY: The node is an inner node, so the children are initialized as
         // inner children.
         &self.children.inner
@@ -130,7 +126,7 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
     ///
     /// The node must be an inner node (a node with level > 0). It is undefined
     /// behavior to call this method on a leaf node.
-    pub(crate) unsafe fn inner_children_mut(&mut self) -> &mut FCVec<Node<N, D, Key, Value>> {
+    pub(crate) unsafe fn inner_children_mut(&mut self) -> &mut FCVec<Node<B, Key, Value>> {
         // SAFETY: The node is an inner node, so the children are initialized as
         // inner children.
         &mut self.children.inner
@@ -163,21 +159,20 @@ impl<N, const D: usize, Key, Value> Node<N, D, Key, Value> {
     }
 }
 
-impl<N, const D: usize, Key, Value> Bounded<N, D> for (Key, Value)
+impl<B, Key, Value> Bounded<B> for (Key, Value)
 where
-    N: Clone,
-    Key: Bounded<N, D>,
+    Key: Bounded<B>,
 {
-    fn bounds(&self) -> Bounds<N, D> {
+    fn bounds(&self) -> B {
         self.0.bounds()
     }
 }
 
-impl<N, const D: usize, Key, Value> Bounded<N, D> for Node<N, D, Key, Value>
+impl<B, Key, Value> Bounded<B> for Node<B, Key, Value>
 where
-    N: Clone,
+    B: Clone,
 {
-    fn bounds(&self) -> Bounds<N, D> {
+    fn bounds(&self) -> B {
         self.bounds.clone()
     }
 }
@@ -196,11 +191,9 @@ impl NodeOps {
         }
     }
 
-    pub(crate) fn empty_leaf<N, const D: usize, Key, Value>(
-        &self,
-    ) -> NodeContainer<N, D, Key, Value>
+    pub(crate) fn empty_leaf<B, Key, Value>(&self) -> NodeContainer<B, Key, Value>
     where
-        N: num_traits::Bounded,
+        B: Bounds,
     {
         // SAFETY: The node is a leaf node, so its level is 0 and its children
         // are initialized as leaf children.
@@ -232,11 +225,11 @@ impl NodeOps {
     /// different FCVecOps. It is undefined behavior to do so if the FCVecOps
     /// have different `max_children` values, and it is a logic error to do so
     /// the FCVecOps have different `min_children` values.
-    unsafe fn wrap<N, const D: usize, Key, Value>(
+    unsafe fn wrap<B, Key, Value>(
         &self,
-        node: Node<N, D, Key, Value>,
+        node: Node<B, Key, Value>,
         level: usize,
-    ) -> NodeContainer<N, D, Key, Value> {
+    ) -> NodeContainer<B, Key, Value> {
         NodeContainer {
             ops: *self,
             level,
@@ -259,11 +252,11 @@ impl NodeOps {
     /// so if the FCVecOps have different `max_children` values, and it is a
     /// logic error to do so if the FCVecOps have different `min_children`
     /// values.
-    pub(crate) unsafe fn wrap_ref<'a, N, const D: usize, Key, Value>(
+    pub(crate) unsafe fn wrap_ref<'a, B, Key, Value>(
         &self,
-        node: &'a Node<N, D, Key, Value>,
+        node: &'a Node<B, Key, Value>,
         level: usize,
-    ) -> NodeRef<'a, N, D, Key, Value> {
+    ) -> NodeRef<'a, B, Key, Value> {
         NodeRef {
             ops: *self,
             level,
@@ -286,11 +279,11 @@ impl NodeOps {
     /// so if the FCVecOps have different `max_children` values, and it is a
     /// logic error to do so if the FCVecOps have different `min_children`
     /// values.
-    pub(crate) unsafe fn wrap_ref_mut<'a, N, const D: usize, Key, Value>(
+    pub(crate) unsafe fn wrap_ref_mut<'a, B, Key, Value>(
         &self,
-        node: &'a mut Node<N, D, Key, Value>,
+        node: &'a mut Node<B, Key, Value>,
         level: usize,
-    ) -> NodeRefMut<'a, N, D, Key, Value> {
+    ) -> NodeRefMut<'a, B, Key, Value> {
         NodeRefMut {
             ops: *self,
             level,
@@ -320,11 +313,11 @@ impl NodeOps {
     /// so if the FCVecOps have different `max_children` values, and it is a
     /// logic error to do so if the FCVecOps have different `min_children`
     /// values.
-    pub(crate) unsafe fn wrap_root_ref_mut<'a, N, const D: usize, Key, Value>(
+    pub(crate) unsafe fn wrap_root_ref_mut<'a, B, Key, Value>(
         &self,
-        node: &'a mut Node<N, D, Key, Value>,
+        node: &'a mut Node<B, Key, Value>,
         height: &'a mut usize,
-    ) -> RootNodeRefMut<'a, N, D, Key, Value> {
+    ) -> RootNodeRefMut<'a, B, Key, Value> {
         RootNodeRefMut {
             ops: *self,
             height,
@@ -349,11 +342,11 @@ impl NodeOps {
     /// behavior to do so if the FCVecOps have different `max_children`
     /// values, and it is a logic error to do so if the FCVecOps have
     /// different `min_children` values.
-    unsafe fn wrap_children<N, const D: usize, Key, Value>(
+    unsafe fn wrap_children<B, Key, Value>(
         &self,
-        children: NodeChildren<N, D, Key, Value>,
+        children: NodeChildren<B, Key, Value>,
         level: usize,
-    ) -> NodeChildrenContainer<N, D, Key, Value> {
+    ) -> NodeChildrenContainer<B, Key, Value> {
         if let Some(level) = NonZeroUsize::new(level) {
             NodeChildrenContainer::Inner(InnerNodeChildrenContainer {
                 ops: *self,
@@ -366,20 +359,20 @@ impl NodeOps {
     }
 }
 
-pub(crate) struct NodeRefMut<'a, N, const D: usize, Key, Value> {
+pub(crate) struct NodeRefMut<'a, B, Key, Value> {
     ops: NodeOps,
     level: usize,
-    node: &'a mut Node<N, D, Key, Value>,
+    node: &'a mut Node<B, Key, Value>,
 }
 
-impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
+impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
     fn self_insert(
         &mut self,
-        entry: NodeEntry<N, D, Key, Value>,
-    ) -> Option<NodeContainer<N, D, Key, Value>>
+        entry: NodeEntry<AABB<N, D>, Key, Value>,
+    ) -> Option<NodeContainer<AABB<N, D>, Key, Value>>
     where
-        N: Ord + Clone + Sub<Output = N> + Into<f64>,
-        Key: Bounded<N, D>,
+        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+        Key: Bounded<AABB<N, D>>,
     {
         let entry_bounds = entry.bounds();
         let min_children = self.ops.min_children;
@@ -423,7 +416,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                         )
                     })
                 } else {
-                    self.node.bounds = Bounds::union(&self.node.bounds, &entry_bounds);
+                    self.node.bounds = AABB::union(&self.node.bounds, &entry_bounds);
                     None
                 }
             }
@@ -438,11 +431,11 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
 
     fn insert(
         &mut self,
-        entry: NodeEntry<N, D, Key, Value>,
-    ) -> Option<NodeContainer<N, D, Key, Value>>
+        entry: NodeEntry<AABB<N, D>, Key, Value>,
+    ) -> Option<NodeContainer<AABB<N, D>, Key, Value>>
     where
         N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-        Key: Bounded<N, D>,
+        Key: Bounded<AABB<N, D>>,
     {
         let entry_bounds = entry.bounds();
         if entry.target_level() != self.level {
@@ -457,10 +450,10 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
             if let Some(new_child) = insert_child.insert(entry) {
                 // The child node split, so the entries in new_child are no longer part of self
                 // Recompute the bounds of self before trying to insert new_child into self
-                self.node.bounds = Bounds::union_all(children.iter().map(|child| child.bounds()));
+                self.node.bounds = AABB::union_all(children.iter().map(|child| child.bounds()));
                 self.self_insert(NodeEntry::Inner(new_child))
             } else {
-                self.node.bounds = Bounds::union(&self.node.bounds, &entry_bounds);
+                self.node.bounds = AABB::union(&self.node.bounds, &entry_bounds);
                 None
             }
         } else {
@@ -472,10 +465,10 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
         &mut self,
         key: Key,
         value: Value,
-    ) -> (Option<Value>, Option<NodeContainer<N, D, Key, Value>>)
+    ) -> (Option<Value>, Option<NodeContainer<AABB<N, D>, Key, Value>>)
     where
         N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-        Key: Eq + Bounded<N, D>,
+        Key: Eq + Bounded<AABB<N, D>>,
     {
         let entry_bounds = key.bounds();
         match self.children_mut() {
@@ -502,10 +495,10 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                                 // The child node split, so the entries in new_child are no longer part of self
                                 // Recompute the bounds of self before trying to insert new_child into self
                                 self.node.bounds =
-                                    Bounds::union_all(children.iter().map(|child| child.bounds()));
+                                    AABB::union_all(children.iter().map(|child| child.bounds()));
                                 self.self_insert(NodeEntry::Inner(new_child))
                             } else {
-                                self.node.bounds = Bounds::union(&self.node.bounds, &entry_bounds);
+                                self.node.bounds = AABB::union(&self.node.bounds, &entry_bounds);
                                 None
                             },
                         )
@@ -533,53 +526,15 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
         }
     }
 
-    fn into_children_mut(self) -> NodeChildrenRefMut<'a, N, D, Key, Value> {
-        if let Some(level) = NonZeroUsize::new(self.level) {
-            NodeChildrenRefMut::Inner(InnerNodeChildrenRefMut {
-                ops: self.ops,
-                level,
-                // SAFETY: The node is an inner node, so the children are
-                // initialized as inner children.
-                children: unsafe { &mut self.node.children.inner },
-            })
-        } else {
-            // SAFETY: The node is a leaf node, so the children are initialized
-            // as leaf children. `self.ops.children` was used to create the
-            // node's children.
-            NodeChildrenRefMut::Leaf(unsafe {
-                self.ops.children.wrap_ref_mut(&mut self.node.children.leaf)
-            })
-        }
-    }
-
-    fn children_mut<'b>(&'b mut self) -> NodeChildrenRefMut<'b, N, D, Key, Value> {
-        if let Some(level) = NonZeroUsize::new(self.level) {
-            NodeChildrenRefMut::Inner(InnerNodeChildrenRefMut {
-                ops: self.ops,
-                level,
-                // SAFETY: The node is an inner node, so the children are
-                // initialized as inner children.
-                children: unsafe { &mut self.node.children.inner },
-            })
-        } else {
-            // SAFETY: The node is a leaf node, so the children are initialized
-            // as leaf children. `self.ops.children` was used to create the
-            // node's children.
-            NodeChildrenRefMut::Leaf(unsafe {
-                self.ops.children.wrap_ref_mut(&mut self.node.children.leaf)
-            })
-        }
-    }
-
     fn remove<Q>(
         &mut self,
         key: &Q,
-        on_underfull: &mut impl FnMut(NodeChildrenContainer<N, D, Key, Value>),
+        on_underfull: &mut impl FnMut(NodeChildrenContainer<AABB<N, D>, Key, Value>),
     ) -> Option<Value>
     where
         N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-        Key: Bounded<N, D> + Eq + Borrow<Q>,
-        Q: Bounded<N, D> + Eq + ?Sized,
+        Key: Bounded<AABB<N, D>> + Eq + Borrow<Q>,
+        Q: Bounded<AABB<N, D>> + Eq + ?Sized,
     {
         let min_children = self.ops.min_children;
         match self.children_mut() {
@@ -597,7 +552,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                             }
 
                             self.node.bounds =
-                                Bounds::union_all(children.iter().map(|child| child.bounds()));
+                                AABB::union_all(children.iter().map(|child| child.bounds()));
 
                             return Some(value);
                         }
@@ -610,7 +565,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
                 if let Some(i) = index {
                     let value = children.swap_remove(i).1;
                     self.node.bounds =
-                        Bounds::union_all(children.iter().map(|(key, _)| key.bounds()));
+                        AABB::union_all(children.iter().map(|(key, _)| key.bounds()));
 
                     return Some(value);
                 }
@@ -618,52 +573,44 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
             }
         }
     }
+}
 
-    pub(crate) fn into_get_mut<Q>(self, key: &Q) -> Option<&'a mut Value>
-    where
-        N: Ord,
-        Key: Borrow<Q>,
-        Q: Eq + Bounded<N, D> + ?Sized,
-    {
-        match self.into_children_mut() {
-            NodeChildrenRefMut::Inner(children) => {
-                for child in children {
-                    if child.node.bounds.contains(&key.bounds()) {
-                        if let Some(value) = child.into_get_mut(key) {
-                            return Some(value);
-                        }
-                    }
-                }
-                None
-            }
-            NodeChildrenRefMut::Leaf(children) => children
-                .into_iter()
-                .find(|(k, _)| k.borrow() == key)
-                .map(|(_, v)| v),
+impl<'a, B, Key, Value> NodeRefMut<'a, B, Key, Value> {
+    fn into_children_mut(self) -> NodeChildrenRefMut<'a, B, Key, Value> {
+        if let Some(level) = NonZeroUsize::new(self.level) {
+            NodeChildrenRefMut::Inner(InnerNodeChildrenRefMut {
+                ops: self.ops,
+                level,
+                // SAFETY: The node is an inner node, so the children are
+                // initialized as inner children.
+                children: unsafe { &mut self.node.children.inner },
+            })
+        } else {
+            // SAFETY: The node is a leaf node, so the children are initialized
+            // as leaf children. `self.ops.children` was used to create the
+            // node's children.
+            NodeChildrenRefMut::Leaf(unsafe {
+                self.ops.children.wrap_ref_mut(&mut self.node.children.leaf)
+            })
         }
     }
 
-    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut Value>
-    where
-        N: Ord,
-        Key: Borrow<Q>,
-        Q: Eq + Bounded<N, D> + ?Sized,
-    {
-        match self.children_mut() {
-            NodeChildrenRefMut::Inner(children) => {
-                for child in children {
-                    if child.node.bounds.contains(&key.bounds()) {
-                        if let Some(value) = child.into_get_mut(key) {
-                            return Some(value);
-                        }
-                    }
-                }
-                None
-            }
-            NodeChildrenRefMut::Leaf(children) => children
-                .into_iter()
-                .find(|(k, _)| k.borrow() == key)
-                .map(|(_, v)| v),
+    fn children_mut<'b>(&'b mut self) -> NodeChildrenRefMut<'b, B, Key, Value> {
+        if let Some(level) = NonZeroUsize::new(self.level) {
+            NodeChildrenRefMut::Inner(InnerNodeChildrenRefMut {
+                ops: self.ops,
+                level,
+                // SAFETY: The node is an inner node, so the children are
+                // initialized as inner children.
+                children: unsafe { &mut self.node.children.inner },
+            })
+        } else {
+            // SAFETY: The node is a leaf node, so the children are initialized
+            // as leaf children. `self.ops.children` was used to create the
+            // node's children.
+            NodeChildrenRefMut::Leaf(unsafe {
+                self.ops.children.wrap_ref_mut(&mut self.node.children.leaf)
+            })
         }
     }
 
@@ -697,22 +644,69 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, N, D, Key, Value> {
             unsafe { (*self.node.children.leaf).len() }
         }
     }
+
+    pub(crate) fn into_get_mut<Q>(self, key: &Q) -> Option<&'a mut Value>
+    where
+        B: Contains<B>,
+        Key: Borrow<Q>,
+        Q: Eq + Bounded<B> + ?Sized,
+    {
+        match self.into_children_mut() {
+            NodeChildrenRefMut::Inner(children) => {
+                for child in children {
+                    if child.node.bounds.contains(&key.bounds()) {
+                        if let Some(value) = child.into_get_mut(key) {
+                            return Some(value);
+                        }
+                    }
+                }
+                None
+            }
+            NodeChildrenRefMut::Leaf(children) => children
+                .into_iter()
+                .find(|(k, _)| k.borrow() == key)
+                .map(|(_, v)| v),
+        }
+    }
+
+    fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut Value>
+    where
+        B: Contains<B>,
+        Key: Borrow<Q>,
+        Q: Eq + Bounded<B> + ?Sized,
+    {
+        match self.children_mut() {
+            NodeChildrenRefMut::Inner(children) => {
+                for child in children {
+                    if child.node.bounds.contains(&key.bounds()) {
+                        if let Some(value) = child.into_get_mut(key) {
+                            return Some(value);
+                        }
+                    }
+                }
+                None
+            }
+            NodeChildrenRefMut::Leaf(children) => children
+                .into_iter()
+                .find(|(k, _)| k.borrow() == key)
+                .map(|(_, v)| v),
+        }
+    }
 }
 
-impl<'a, N, const D: usize, Key, Value> Bounded<N, D> for NodeRefMut<'a, N, D, Key, Value>
+impl<'a, B, Key, Value> Bounded<B> for NodeRefMut<'a, B, Key, Value>
 where
-    N: Clone,
-    Key: Bounded<N, D>,
+    B: Clone,
 {
-    fn bounds(&self) -> Bounds<N, D> {
+    fn bounds(&self) -> B {
         self.node.bounds()
     }
 }
 
-impl<'a, N, const D: usize, Key, Value> From<&'a mut RootNodeRefMut<'_, N, D, Key, Value>>
-    for NodeRefMut<'a, N, D, Key, Value>
+impl<'a, B, Key, Value> From<&'a mut RootNodeRefMut<'_, B, Key, Value>>
+    for NodeRefMut<'a, B, Key, Value>
 {
-    fn from(root: &'a mut RootNodeRefMut<'_, N, D, Key, Value>) -> Self {
+    fn from(root: &'a mut RootNodeRefMut<'_, B, Key, Value>) -> Self {
         NodeRefMut {
             ops: root.ops,
             level: *root.height,
@@ -721,56 +715,17 @@ impl<'a, N, const D: usize, Key, Value> From<&'a mut RootNodeRefMut<'_, N, D, Ke
     }
 }
 
-pub(crate) struct RootNodeRefMut<'a, N, const D: usize, Key, Value> {
+pub(crate) struct RootNodeRefMut<'a, B, Key, Value> {
     ops: NodeOps,
     height: &'a mut usize,
-    node: &'a mut Node<N, D, Key, Value>,
+    node: &'a mut Node<B, Key, Value>,
 }
 
-impl<'a, N, const D: usize, Key, Value> RootNodeRefMut<'a, N, D, Key, Value> {
-    fn branch(&mut self, sibling: NodeContainer<N, D, Key, Value>)
-    where
-        N: Ord + Clone + num_traits::Bounded,
-    {
-        if sibling.level != *self.height {
-            panic!(
-                "cannot branch with sibling of level {} when root node has level {}",
-                sibling.level, *self.height
-            )
-        }
-
-        let bounds = Bounds::union(&self.node.bounds, &sibling.node.bounds);
-        let mut next_root_children = self.ops.children.new();
-        // The below operation redefines the root node to be an inner node that
-        // contains the former root node and the provided sibling. This requires
-        // moving the root into itself.
-
-        // SAFETY: self.node is temporarily made an invalid copy with ptr::read
-        // but the invalid copy is subsequently overwritten with ptr::write. The
-        // children of the new root node are both nodes at the same level as the
-        // former root node, so the level of the new root node is the same as
-        // the level of the former root node plus one.
-        unsafe {
-            next_root_children.push(ptr::read(self.node));
-            next_root_children.push(sibling.unwrap());
-            ptr::write(
-                self.node,
-                Node::new(
-                    bounds,
-                    NodeChildren {
-                        inner: ManuallyDrop::new(next_root_children.unwrap()),
-                    },
-                    *self.height + 1,
-                ),
-            );
-        }
-        *self.height += 1;
-    }
-
-    fn insert_entry(&mut self, entry: NodeEntry<N, D, Key, Value>)
+impl<'a, N, const D: usize, Key, Value> RootNodeRefMut<'a, AABB<N, D>, Key, Value> {
+    fn insert_entry(&mut self, entry: NodeEntry<AABB<N, D>, Key, Value>)
     where
         N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-        Key: Bounded<N, D>,
+        Key: Bounded<AABB<N, D>>,
     {
         if let Some(sibling) = self.node_ref_mut().insert(entry) {
             self.branch(sibling);
@@ -780,7 +735,7 @@ impl<'a, N, const D: usize, Key, Value> RootNodeRefMut<'a, N, D, Key, Value> {
     pub(crate) fn insert(&mut self, key: Key, value: Value)
     where
         N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-        Key: Bounded<N, D>,
+        Key: Bounded<AABB<N, D>>,
     {
         self.insert_entry(NodeEntry::Leaf((key, value)));
     }
@@ -788,7 +743,7 @@ impl<'a, N, const D: usize, Key, Value> RootNodeRefMut<'a, N, D, Key, Value> {
     pub(crate) fn insert_unique(&mut self, key: Key, value: Value) -> Option<Value>
     where
         N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-        Key: Eq + Bounded<N, D>,
+        Key: Eq + Bounded<AABB<N, D>>,
     {
         let (prev_value, sibling) = self.node_ref_mut().insert_unique(key, value);
         if let Some(sibling) = sibling {
@@ -797,47 +752,13 @@ impl<'a, N, const D: usize, Key, Value> RootNodeRefMut<'a, N, D, Key, Value> {
         prev_value
     }
 
-    fn node_ref_mut<'b>(&'b mut self) -> NodeRefMut<'b, N, D, Key, Value> {
-        NodeRefMut {
-            ops: self.ops,
-            level: *self.height,
-            node: self.node,
-        }
-    }
-
-    fn try_unbranch(&mut self) {
-        let new_root = match self.node_ref_mut().children_mut() {
-            NodeChildrenRefMut::Inner(mut children) => {
-                if children.len() == 1 {
-                    Some(children.swap_remove(0))
-                } else {
-                    None
-                }
-            }
-            NodeChildrenRefMut::Leaf(_) => {
-                // Cannot unbranch a leaf node
-                None
-            }
-        };
-        if let Some(new_root) = new_root {
-            // SAFETY: The former root is replaced immediately after the former
-            // root is dropped, so the former root is not used after being
-            // dropped.
-            unsafe {
-                self.node_ref_mut().drop();
-            }
-            *self.node = new_root.unwrap();
-            *self.height -= 1;
-        }
-    }
-
     pub(crate) fn remove<Q>(&'a mut self, key: &Q) -> Option<Value>
     where
         N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-        Key: Bounded<N, D> + Eq + Borrow<Q>,
-        Q: Bounded<N, D> + Eq + ?Sized,
+        Key: Bounded<AABB<N, D>> + Eq + Borrow<Q>,
+        Q: Bounded<AABB<N, D>> + Eq + ?Sized,
     {
-        let mut reinsert_entries: Box<[Option<NodeChildren<N, D, Key, Value>>]> =
+        let mut reinsert_entries: Box<[Option<NodeChildren<AABB<N, D>, Key, Value>>]> =
             std::iter::repeat_with(|| None).take(*self.height).collect();
         if let Some(value) = self.node_ref_mut().remove(key, &mut |children| {
             let level = children.level();
@@ -875,14 +796,89 @@ impl<'a, N, const D: usize, Key, Value> RootNodeRefMut<'a, N, D, Key, Value> {
     }
 }
 
-pub(crate) struct NodeContainer<N, const D: usize, Key, Value> {
-    ops: NodeOps,
-    level: usize,
-    node: Node<N, D, Key, Value>,
+impl<'a, B, Key, Value> RootNodeRefMut<'a, B, Key, Value> {
+    fn branch(&mut self, sibling: NodeContainer<B, Key, Value>)
+    where
+        B: Bounds,
+    {
+        if sibling.level != *self.height {
+            panic!(
+                "cannot branch with sibling of level {} when root node has level {}",
+                sibling.level, *self.height
+            )
+        }
+
+        let bounds = B::union(&self.node.bounds, &sibling.node.bounds);
+        let mut next_root_children = self.ops.children.new();
+        // The below operation redefines the root node to be an inner node that
+        // contains the former root node and the provided sibling. This requires
+        // moving the root into itself.
+
+        // SAFETY: self.node is temporarily made an invalid copy with ptr::read
+        // but the invalid copy is subsequently overwritten with ptr::write. The
+        // children of the new root node are both nodes at the same level as the
+        // former root node, so the level of the new root node is the same as
+        // the level of the former root node plus one.
+        unsafe {
+            next_root_children.push(ptr::read(self.node));
+            next_root_children.push(sibling.unwrap());
+            ptr::write(
+                self.node,
+                Node::new(
+                    bounds,
+                    NodeChildren {
+                        inner: ManuallyDrop::new(next_root_children.unwrap()),
+                    },
+                    *self.height + 1,
+                ),
+            );
+        }
+        *self.height += 1;
+    }
+
+    fn node_ref_mut<'b>(&'b mut self) -> NodeRefMut<'b, B, Key, Value> {
+        NodeRefMut {
+            ops: self.ops,
+            level: *self.height,
+            node: self.node,
+        }
+    }
+
+    fn try_unbranch(&mut self) {
+        let new_root = match self.node_ref_mut().children_mut() {
+            NodeChildrenRefMut::Inner(mut children) => {
+                if children.len() == 1 {
+                    Some(children.swap_remove(0))
+                } else {
+                    None
+                }
+            }
+            NodeChildrenRefMut::Leaf(_) => {
+                // Cannot unbranch a leaf node
+                None
+            }
+        };
+        if let Some(new_root) = new_root {
+            // SAFETY: The former root is replaced immediately after the former
+            // root is dropped, so the former root is not used after being
+            // dropped.
+            unsafe {
+                self.node_ref_mut().drop();
+            }
+            *self.node = new_root.unwrap();
+            *self.height -= 1;
+        }
+    }
 }
 
-impl<'a, N, const D: usize, Key, Value> NodeContainer<N, D, Key, Value> {
-    fn borrow(&'a self) -> NodeRef<'a, N, D, Key, Value> {
+pub(crate) struct NodeContainer<B, Key, Value> {
+    ops: NodeOps,
+    level: usize,
+    node: Node<B, Key, Value>,
+}
+
+impl<'a, B, Key, Value> NodeContainer<B, Key, Value> {
+    fn borrow(&self) -> NodeRef<B, Key, Value> {
         NodeRef {
             ops: self.ops,
             level: self.level,
@@ -890,7 +886,7 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<N, D, Key, Value> {
         }
     }
 
-    fn borrow_mut(&'a mut self) -> NodeRefMut<'a, N, D, Key, Value> {
+    fn borrow_mut(&mut self) -> NodeRefMut<B, Key, Value> {
         NodeRefMut {
             ops: self.ops,
             level: self.level,
@@ -898,7 +894,7 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<N, D, Key, Value> {
         }
     }
 
-    fn children(self) -> NodeChildrenContainer<N, D, Key, Value> {
+    fn children(self) -> NodeChildrenContainer<B, Key, Value> {
         let level = self.level;
         let ops = self.ops;
         let node = {
@@ -930,7 +926,7 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<N, D, Key, Value> {
     /// Unwraps the node from the container without dropping it. The returned
     /// node can only be wrapped again with the same level and [`NodeOps`] that
     /// were used to create the container.
-    pub(crate) fn unwrap(self) -> Node<N, D, Key, Value> {
+    pub(crate) fn unwrap(self) -> Node<B, Key, Value> {
         // SAFETY: self.node is not read after being moved out of the
         // container - self is dropped immediately afterwards.
         let node = unsafe { ptr::read(&self.node) };
@@ -939,7 +935,7 @@ impl<'a, N, const D: usize, Key, Value> NodeContainer<N, D, Key, Value> {
     }
 }
 
-impl<N, const D: usize, Key, Value> Drop for NodeContainer<N, D, Key, Value> {
+impl<B, Key, Value> Drop for NodeContainer<B, Key, Value> {
     fn drop(&mut self) {
         // SAFETY: NodeContainer has exclusive ownership of self.node, so it is
         // safe to drop.
@@ -947,9 +943,9 @@ impl<N, const D: usize, Key, Value> Drop for NodeContainer<N, D, Key, Value> {
     }
 }
 
-impl<N, const D: usize, Key, Value> Clone for NodeContainer<N, D, Key, Value>
+impl<B, Key, Value> Clone for NodeContainer<B, Key, Value>
 where
-    N: Clone,
+    B: Clone,
     Key: Clone,
     Value: Clone,
 {
@@ -958,9 +954,9 @@ where
     }
 }
 
-impl<N, const D: usize, Key, Value> Debug for NodeContainer<N, D, Key, Value>
+impl<B, Key, Value> Debug for NodeContainer<B, Key, Value>
 where
-    N: Debug,
+    B: Debug,
     Key: Debug,
     Value: Debug,
 {
@@ -972,14 +968,14 @@ where
     }
 }
 
-pub(crate) struct NodeRef<'a, N, const D: usize, Key, Value> {
+pub(crate) struct NodeRef<'a, S, Key, Value> {
     ops: NodeOps,
     level: usize,
-    node: &'a Node<N, D, Key, Value>,
+    node: &'a Node<S, Key, Value>,
 }
 
-impl<'a, N, const D: usize, Key, Value> NodeRef<'a, N, D, Key, Value> {
-    pub(crate) fn children(&self) -> NodeChildrenRef<'a, N, D, Key, Value> {
+impl<'a, B, Key, Value> NodeRef<'a, B, Key, Value> {
+    pub(crate) fn children(&self) -> NodeChildrenRef<'a, B, Key, Value> {
         if let Some(level) = NonZeroUsize::new(self.level) {
             NodeChildrenRef::Inner(InnerNodeChildrenRef {
                 ops: self.ops,
@@ -1011,9 +1007,9 @@ impl<'a, N, const D: usize, Key, Value> NodeRef<'a, N, D, Key, Value> {
 
     pub(crate) fn get<Q>(&self, key: &Q) -> Option<&'a Value>
     where
-        N: Ord,
+        B: Contains<B>,
         Key: Borrow<Q>,
-        Q: Eq + Bounded<N, D> + ?Sized,
+        Q: Eq + Bounded<B> + ?Sized,
     {
         match self.children() {
             NodeChildrenRef::Inner(children) => {
@@ -1033,9 +1029,9 @@ impl<'a, N, const D: usize, Key, Value> NodeRef<'a, N, D, Key, Value> {
         }
     }
 
-    pub(crate) fn clone(&self) -> NodeContainer<N, D, Key, Value>
+    pub(crate) fn clone(&self) -> NodeContainer<B, Key, Value>
     where
-        N: Clone,
+        B: Clone,
         Key: Clone,
         Value: Clone,
     {
@@ -1050,17 +1046,17 @@ impl<'a, N, const D: usize, Key, Value> NodeRef<'a, N, D, Key, Value> {
         }
     }
 
-    pub(crate) fn _debug_assert_bvh(&self) -> Bounds<N, D>
+    pub(crate) fn _debug_assert_bvh(&self) -> B
     where
-        Key: Bounded<N, D>,
-        N: Ord + num_traits::Bounded + Clone + Eq + Debug,
+        B: Bounds + Debug + Eq,
+        Key: Bounded<B>,
     {
         let bounds = match self.children() {
             NodeChildrenRef::Inner(children) => {
-                Bounds::union_all(children.iter().map(|child| child._debug_assert_bvh()))
+                B::union_all(children.iter().map(|child| child._debug_assert_bvh()))
             }
             NodeChildrenRef::Leaf(children) => {
-                Bounds::union_all(children.iter().map(|(key, _)| key.bounds()))
+                B::union_all(children.iter().map(|(key, _)| key.bounds()))
             }
         };
 
@@ -1068,9 +1064,9 @@ impl<'a, N, const D: usize, Key, Value> NodeRef<'a, N, D, Key, Value> {
         bounds
     }
 
-    pub(crate) fn _debug_assert_eq(&self, other: &NodeRef<N, D, Key, Value>)
+    pub(crate) fn _debug_assert_eq(&self, other: &NodeRef<B, Key, Value>)
     where
-        N: Debug + Eq,
+        B: Debug + Eq,
         Key: Debug + Eq,
         Value: Debug + Eq,
     {
@@ -1091,9 +1087,9 @@ impl<'a, N, const D: usize, Key, Value> NodeRef<'a, N, D, Key, Value> {
     }
 }
 
-impl<'a, N, const D: usize, Key, Value> Debug for NodeRef<'a, N, D, Key, Value>
+impl<'a, B, Key, Value> Debug for NodeRef<'a, B, Key, Value>
 where
-    N: Debug,
+    B: Debug,
     Key: Debug,
     Value: Debug,
 {
@@ -1105,26 +1101,25 @@ where
     }
 }
 
-impl<'a, N, const D: usize, Key, Value> Bounded<N, D> for NodeRef<'a, N, D, Key, Value>
+impl<'a, B, Key, Value> Bounded<B> for NodeRef<'a, B, Key, Value>
 where
-    N: Clone,
-    Key: Bounded<N, D>,
+    B: Clone,
 {
-    fn bounds(&self) -> Bounds<N, D> {
+    fn bounds(&self) -> B {
         self.node.bounds()
     }
 }
 
-pub(crate) struct InnerNodeChildrenRef<'a, N, const D: usize, Key, Value> {
+pub(crate) struct InnerNodeChildrenRef<'a, B, Key, Value> {
     ops: NodeOps,
     level: NonZeroUsize,
-    children: &'a FCVec<Node<N, D, Key, Value>>,
+    children: &'a FCVec<Node<B, Key, Value>>,
 }
 
-impl<'a, N, const D: usize, Key, Value> From<InnerNodeChildrenRefMut<'a, N, D, Key, Value>>
-    for InnerNodeChildrenRef<'a, N, D, Key, Value>
+impl<'a, B, Key, Value> From<InnerNodeChildrenRefMut<'a, B, Key, Value>>
+    for InnerNodeChildrenRef<'a, B, Key, Value>
 {
-    fn from(children: InnerNodeChildrenRefMut<'a, N, D, Key, Value>) -> Self {
+    fn from(children: InnerNodeChildrenRefMut<'a, B, Key, Value>) -> Self {
         InnerNodeChildrenRef {
             ops: children.ops,
             level: children.level,
@@ -1133,9 +1128,9 @@ impl<'a, N, const D: usize, Key, Value> From<InnerNodeChildrenRefMut<'a, N, D, K
     }
 }
 
-impl<'a, N, const D: usize, Key, Value> Debug for InnerNodeChildrenRef<'a, N, D, Key, Value>
+impl<'a, B, Key, Value> Debug for InnerNodeChildrenRef<'a, B, Key, Value>
 where
-    N: Debug,
+    B: Debug,
     Key: Debug,
     Value: Debug,
 {
@@ -1144,12 +1139,12 @@ where
     }
 }
 
-impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRef<'a, N, D, Key, Value> {
+impl<'a, B, Key, Value> InnerNodeChildrenRef<'a, B, Key, Value> {
     fn len(&self) -> usize {
         self.children.len()
     }
 
-    fn iter(&self) -> InnerNodeChildrenIter<'a, N, D, Key, Value> {
+    fn iter(&self) -> InnerNodeChildrenIter<'a, B, Key, Value> {
         InnerNodeChildrenIter {
             ops: self.ops,
             level: self.level,
@@ -1157,9 +1152,9 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRef<'a, N, D, Key, Valu
         }
     }
 
-    fn clone(&self) -> InnerNodeChildrenContainer<N, D, Key, Value>
+    fn clone(&self) -> InnerNodeChildrenContainer<B, Key, Value>
     where
-        N: Clone,
+        B: Clone,
         Key: Clone,
         Value: Clone,
     {
@@ -1175,9 +1170,9 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRef<'a, N, D, Key, Valu
         }
     }
 
-    fn _debug_assert_eq(&self, other: &InnerNodeChildrenRef<'a, N, D, Key, Value>)
+    fn _debug_assert_eq(&self, other: &InnerNodeChildrenRef<'a, B, Key, Value>)
     where
-        N: Debug + Eq,
+        B: Debug + Eq,
         Key: Debug + Eq,
         Value: Debug + Eq,
     {
@@ -1189,17 +1184,15 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRef<'a, N, D, Key, Valu
     }
 }
 
-pub(crate) struct InnerNodeChildrenIter<'a, N, const D: usize, Key, Value> {
+pub(crate) struct InnerNodeChildrenIter<'a, B, Key, Value> {
     ops: NodeOps,
     level: NonZeroUsize,
-    children: slice::Iter<'a, Node<N, D, Key, Value>>,
+    children: slice::Iter<'a, Node<B, Key, Value>>,
 }
 
-impl<'a, N, const D: usize, Key, Value> IntoIterator
-    for InnerNodeChildrenRef<'a, N, D, Key, Value>
-{
-    type Item = NodeRef<'a, N, D, Key, Value>;
-    type IntoIter = InnerNodeChildrenIter<'a, N, D, Key, Value>;
+impl<'a, B, Key, Value> IntoIterator for InnerNodeChildrenRef<'a, B, Key, Value> {
+    type Item = NodeRef<'a, B, Key, Value>;
+    type IntoIter = InnerNodeChildrenIter<'a, B, Key, Value>;
 
     fn into_iter(self) -> Self::IntoIter {
         InnerNodeChildrenIter {
@@ -1210,8 +1203,8 @@ impl<'a, N, const D: usize, Key, Value> IntoIterator
     }
 }
 
-impl<'a, N, const D: usize, Key, Value> Iterator for InnerNodeChildrenIter<'a, N, D, Key, Value> {
-    type Item = NodeRef<'a, N, D, Key, Value>;
+impl<'a, B, Key, Value> Iterator for InnerNodeChildrenIter<'a, B, Key, Value> {
+    type Item = NodeRef<'a, B, Key, Value>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.children
@@ -1223,14 +1216,14 @@ impl<'a, N, const D: usize, Key, Value> Iterator for InnerNodeChildrenIter<'a, N
     }
 }
 
-pub(crate) enum NodeChildrenRef<'a, N, const D: usize, Key, Value> {
-    Inner(InnerNodeChildrenRef<'a, N, D, Key, Value>),
+pub(crate) enum NodeChildrenRef<'a, B, Key, Value> {
+    Inner(InnerNodeChildrenRef<'a, B, Key, Value>),
     Leaf(FCVecRef<'a, (Key, Value)>),
 }
 
-impl<'a, N, const D: usize, Key, Value> Debug for NodeChildrenRef<'a, N, D, Key, Value>
+impl<'a, B, Key, Value> Debug for NodeChildrenRef<'a, B, Key, Value>
 where
-    N: Debug,
+    B: Debug,
     Key: Debug,
     Value: Debug,
 {
@@ -1242,7 +1235,7 @@ where
     }
 }
 
-impl<'a, N, const D: usize, Key, Value> NodeChildrenRef<'a, N, D, Key, Value> {
+impl<'a, B, Key, Value> NodeChildrenRef<'a, B, Key, Value> {
     fn len(&self) -> usize {
         match self {
             NodeChildrenRef::Inner(children) => children.len(),
@@ -1250,9 +1243,9 @@ impl<'a, N, const D: usize, Key, Value> NodeChildrenRef<'a, N, D, Key, Value> {
         }
     }
 
-    fn clone(&self) -> NodeChildrenContainer<N, D, Key, Value>
+    fn clone(&self) -> NodeChildrenContainer<B, Key, Value>
     where
-        N: Clone,
+        B: Clone,
         Key: Clone,
         Value: Clone,
     {
@@ -1262,9 +1255,9 @@ impl<'a, N, const D: usize, Key, Value> NodeChildrenRef<'a, N, D, Key, Value> {
         }
     }
 
-    fn _debug_assert_eq(&self, other: &NodeChildrenRef<N, D, Key, Value>)
+    fn _debug_assert_eq(&self, other: &NodeChildrenRef<B, Key, Value>)
     where
-        N: Debug + Eq,
+        B: Debug + Eq,
         Key: Debug + Eq,
         Value: Debug + Eq,
     {
@@ -1280,14 +1273,14 @@ impl<'a, N, const D: usize, Key, Value> NodeChildrenRef<'a, N, D, Key, Value> {
     }
 }
 
-struct InnerNodeChildrenRefMut<'a, N, const D: usize, Key, Value> {
+struct InnerNodeChildrenRefMut<'a, B, Key, Value> {
     ops: NodeOps,
     level: NonZeroUsize,
-    children: &'a mut FCVec<Node<N, D, Key, Value>>,
+    children: &'a mut FCVec<Node<B, Key, Value>>,
 }
 
-impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, N, D, Key, Value> {
-    fn children_mut(&mut self) -> FCVecRefMut<Node<N, D, Key, Value>> {
+impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
+    fn children_mut(&mut self) -> FCVecRefMut<Node<B, Key, Value>> {
         // SAFETY: The level of a child of an inner node is always one less than
         // the level of the inner node. The children of an inner node are
         // allocated by the same FCVecOps as the inner node.
@@ -1318,7 +1311,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, N, D, Key, V
         self.children.len()
     }
 
-    fn at_mut<'b>(&'b mut self, index: usize) -> NodeRefMut<'b, N, D, Key, Value> {
+    fn at_mut<'b>(&'b mut self, index: usize) -> NodeRefMut<'b, B, Key, Value> {
         // SAFETY: The level of a child of an inner node is always one less than
         // the level of the inner node. The children of an inner node are
         // allocated by the same FCVecOps as the inner node.
@@ -1328,7 +1321,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, N, D, Key, V
         }
     }
 
-    fn swap_remove(&mut self, index: usize) -> NodeContainer<N, D, Key, Value> {
+    fn swap_remove(&mut self, index: usize) -> NodeContainer<B, Key, Value> {
         let child = self.children_mut().swap_remove(index);
         // SAFETY: The level of a child of an inner node is always one less than
         // the level of the inner node. The children of an inner node are
@@ -1336,7 +1329,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, N, D, Key, V
         unsafe { self.ops.wrap(child, self.level.get() - 1) }
     }
 
-    fn iter<'b>(&'b self) -> InnerNodeChildrenIter<'b, N, D, Key, Value> {
+    fn iter<'b>(&'b self) -> InnerNodeChildrenIter<'b, B, Key, Value> {
         InnerNodeChildrenIter {
             ops: self.ops,
             level: self.level,
@@ -1344,7 +1337,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, N, D, Key, V
         }
     }
 
-    fn iter_mut<'b>(&'b mut self) -> InnerNodeChildrenIterMut<'b, N, D, Key, Value> {
+    fn iter_mut<'b>(&'b mut self) -> InnerNodeChildrenIterMut<'b, B, Key, Value> {
         InnerNodeChildrenIterMut {
             ops: self.ops,
             level: self.level,
@@ -1354,8 +1347,8 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, N, D, Key, V
 
     fn try_push(
         &mut self,
-        node: NodeContainer<N, D, Key, Value>,
-    ) -> Option<NodeContainer<N, D, Key, Value>> {
+        node: NodeContainer<B, Key, Value>,
+    ) -> Option<NodeContainer<B, Key, Value>> {
         if node.level != self.level.get() - 1 {
             panic!("Cannot push a node with the wrong level");
         }
@@ -1366,13 +1359,15 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, N, D, Key, V
             // are allocated by the same FCVecOps as the inner node.
             .map(|node| unsafe { self.ops.wrap(node, self.level.get() - 1) })
     }
+}
 
+impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, AABB<N, D>, Key, Value> {
     fn split(
         &mut self,
-        overflow_node: NodeContainer<N, D, Key, Value>,
-    ) -> (Bounds<N, D>, NodeContainer<N, D, Key, Value>)
+        overflow_node: NodeContainer<AABB<N, D>, Key, Value>,
+    ) -> (AABB<N, D>, NodeContainer<AABB<N, D>, Key, Value>)
     where
-        N: Ord + Clone + Sub<Output = N> + Into<f64>,
+        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
     {
         if overflow_node.level != self.level.get() - 1 {
             panic!(
@@ -1405,17 +1400,15 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, N, D, Key, V
     }
 }
 
-struct InnerNodeChildrenIterMut<'a, N, const D: usize, Key, Value> {
+struct InnerNodeChildrenIterMut<'a, B, Key, Value> {
     ops: NodeOps,
     level: NonZeroUsize,
-    children: slice::IterMut<'a, Node<N, D, Key, Value>>,
+    children: slice::IterMut<'a, Node<B, Key, Value>>,
 }
 
-impl<'a, N, const D: usize, Key, Value> IntoIterator
-    for InnerNodeChildrenRefMut<'a, N, D, Key, Value>
-{
-    type Item = NodeRefMut<'a, N, D, Key, Value>;
-    type IntoIter = InnerNodeChildrenIterMut<'a, N, D, Key, Value>;
+impl<'a, B, Key, Value> IntoIterator for InnerNodeChildrenRefMut<'a, B, Key, Value> {
+    type Item = NodeRefMut<'a, B, Key, Value>;
+    type IntoIter = InnerNodeChildrenIterMut<'a, B, Key, Value>;
 
     fn into_iter(self) -> Self::IntoIter {
         InnerNodeChildrenIterMut {
@@ -1426,10 +1419,8 @@ impl<'a, N, const D: usize, Key, Value> IntoIterator
     }
 }
 
-impl<'a, N, const D: usize, Key, Value> Iterator
-    for InnerNodeChildrenIterMut<'a, N, D, Key, Value>
-{
-    type Item = NodeRefMut<'a, N, D, Key, Value>;
+impl<'a, B, Key, Value> Iterator for InnerNodeChildrenIterMut<'a, B, Key, Value> {
+    type Item = NodeRefMut<'a, B, Key, Value>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.children
@@ -1441,20 +1432,20 @@ impl<'a, N, const D: usize, Key, Value> Iterator
     }
 }
 
-enum NodeChildrenRefMut<'a, N, const D: usize, Key, Value> {
-    Inner(InnerNodeChildrenRefMut<'a, N, D, Key, Value>),
+enum NodeChildrenRefMut<'a, B, Key, Value> {
+    Inner(InnerNodeChildrenRefMut<'a, B, Key, Value>),
     Leaf(FCVecRefMut<'a, (Key, Value)>),
 }
 
-struct InnerNodeChildrenContainer<N, const D: usize, Key, Value> {
+struct InnerNodeChildrenContainer<B, Key, Value> {
     ops: NodeOps,
     level: NonZeroUsize,
-    children: FCVec<Node<N, D, Key, Value>>,
+    children: FCVec<Node<B, Key, Value>>,
 }
 
-impl<N, const D: usize, Key, Value> Debug for InnerNodeChildrenContainer<N, D, Key, Value>
+impl<B, Key, Value> Debug for InnerNodeChildrenContainer<B, Key, Value>
 where
-    N: Debug,
+    B: Debug,
     Key: Debug,
     Value: Debug,
 {
@@ -1463,9 +1454,9 @@ where
     }
 }
 
-impl<N, const D: usize, Key, Value> IntoIterator for InnerNodeChildrenContainer<N, D, Key, Value> {
-    type Item = NodeContainer<N, D, Key, Value>;
-    type IntoIter = InnerNodeChildrenIntoIter<N, D, Key, Value>;
+impl<B, Key, Value> IntoIterator for InnerNodeChildrenContainer<B, Key, Value> {
+    type Item = NodeContainer<B, Key, Value>;
+    type IntoIter = InnerNodeChildrenIntoIter<B, Key, Value>;
 
     fn into_iter(self) -> Self::IntoIter {
         let ops = self.ops;
@@ -1482,7 +1473,7 @@ impl<N, const D: usize, Key, Value> IntoIterator for InnerNodeChildrenContainer<
     }
 }
 
-impl<'a, N, const D: usize, Key, Value> Drop for InnerNodeChildrenContainer<N, D, Key, Value> {
+impl<'a, B, Key, Value> Drop for InnerNodeChildrenContainer<B, Key, Value> {
     fn drop(&mut self) {
         // SAFETY: InnerNodeChildrenContainer has exclusive ownership of
         // self.children, so it is safe to drop.
@@ -1490,8 +1481,8 @@ impl<'a, N, const D: usize, Key, Value> Drop for InnerNodeChildrenContainer<N, D
     }
 }
 
-impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenContainer<N, D, Key, Value> {
-    fn r#ref(&'a self) -> InnerNodeChildrenRef<'a, N, D, Key, Value> {
+impl<'a, B, Key, Value> InnerNodeChildrenContainer<B, Key, Value> {
+    fn r#ref(&'a self) -> InnerNodeChildrenRef<'a, B, Key, Value> {
         InnerNodeChildrenRef {
             ops: self.ops,
             level: self.level,
@@ -1499,7 +1490,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenContainer<N, D, Key, Va
         }
     }
 
-    fn ref_mut(&'a mut self) -> InnerNodeChildrenRefMut<'a, N, D, Key, Value> {
+    fn ref_mut(&'a mut self) -> InnerNodeChildrenRefMut<'a, B, Key, Value> {
         InnerNodeChildrenRefMut {
             ops: self.ops,
             level: self.level,
@@ -1511,7 +1502,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenContainer<N, D, Key, Va
     /// returned children can only be wrapped again with the same level and
     /// [`NodeOps`] that were used to create the container, and must be dropped
     /// to avoid memory leaks.
-    fn unwrap(self) -> FCVec<Node<N, D, Key, Value>> {
+    fn unwrap(self) -> FCVec<Node<B, Key, Value>> {
         // SAFETY: self.children is not read after being moved out of the
         // container - self is dropped immediately afterwards.
         let children = unsafe { ptr::read(&self.children) };
@@ -1520,14 +1511,14 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenContainer<N, D, Key, Va
     }
 }
 
-struct InnerNodeChildrenIntoIter<N, const D: usize, Key, Value> {
+struct InnerNodeChildrenIntoIter<B, Key, Value> {
     ops: NodeOps,
     level: NonZeroUsize,
-    children: fc_vec::IntoIter<Node<N, D, Key, Value>>,
+    children: fc_vec::IntoIter<Node<B, Key, Value>>,
 }
 
-impl<N, const D: usize, Key, Value> Iterator for InnerNodeChildrenIntoIter<N, D, Key, Value> {
-    type Item = NodeContainer<N, D, Key, Value>;
+impl<B, Key, Value> Iterator for InnerNodeChildrenIntoIter<B, Key, Value> {
+    type Item = NodeContainer<B, Key, Value>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.children
@@ -1543,20 +1534,20 @@ impl<N, const D: usize, Key, Value> Iterator for InnerNodeChildrenIntoIter<N, D,
     }
 }
 
-impl<N, const D: usize, Key, Value> Drop for InnerNodeChildrenIntoIter<N, D, Key, Value> {
+impl<B, Key, Value> Drop for InnerNodeChildrenIntoIter<B, Key, Value> {
     fn drop(&mut self) {
         for _ in &mut *self {}
     }
 }
 
-enum NodeChildrenContainer<N, const D: usize, Key, Value> {
-    Inner(InnerNodeChildrenContainer<N, D, Key, Value>),
+enum NodeChildrenContainer<B, Key, Value> {
+    Inner(InnerNodeChildrenContainer<B, Key, Value>),
     Leaf(FCVecContainer<(Key, Value)>),
 }
 
-impl<N, const D: usize, Key, Value> Debug for NodeChildrenContainer<N, D, Key, Value>
+impl<B, Key, Value> Debug for NodeChildrenContainer<B, Key, Value>
 where
-    N: Debug,
+    B: Debug,
     Key: Debug,
     Value: Debug,
 {
@@ -1565,7 +1556,7 @@ where
     }
 }
 
-impl<N, const D: usize, Key, Value> NodeChildrenContainer<N, D, Key, Value> {
+impl<B, Key, Value> NodeChildrenContainer<B, Key, Value> {
     fn level(&self) -> usize {
         match self {
             NodeChildrenContainer::Inner(children) => children.level.get(),
@@ -1573,7 +1564,7 @@ impl<N, const D: usize, Key, Value> NodeChildrenContainer<N, D, Key, Value> {
         }
     }
 
-    fn r#ref(&self) -> NodeChildrenRef<N, D, Key, Value> {
+    fn r#ref(&self) -> NodeChildrenRef<B, Key, Value> {
         match self {
             NodeChildrenContainer::Inner(children) => NodeChildrenRef::Inner(children.r#ref()),
             NodeChildrenContainer::Leaf(children) => NodeChildrenRef::Leaf(children.r#ref()),
@@ -1584,7 +1575,7 @@ impl<N, const D: usize, Key, Value> NodeChildrenContainer<N, D, Key, Value> {
     /// returned children can only be wrapped again with the same level and
     /// [`NodeOps`] that were used to create the container, and must be dropped
     /// to avoid memory leaks.
-    fn unwrap(self) -> NodeChildren<N, D, Key, Value> {
+    fn unwrap(self) -> NodeChildren<B, Key, Value> {
         match self {
             NodeChildrenContainer::Inner(children) => NodeChildren {
                 inner: ManuallyDrop::new(children.unwrap()),

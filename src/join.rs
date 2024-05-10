@@ -60,28 +60,15 @@ impl<'a, 'b, T0, T1> Iterator for ProductIter<'a, 'b, T0, T1> {
 /// heights, the iterator will simultaneously descend into both trees until it reaches the leaf
 /// nodes of the shorter tree, and then join the leaf nodes of the shorter tree with the inner nodes
 /// of the taller tree.
-pub struct JoinIter<
-    'a,
-    'b,
-    N0,
-    N1,
-    const D0: usize,
-    const D1: usize,
-    Key0,
-    Key1,
-    Value0,
-    Value1,
-    Q0,
-    Q1,
-    Filter,
-> where
+pub struct JoinIter<'a, 'b, B0, B1, Key0, Key1, Value0, Value1, Q0, Q1, Filter>
+where
     Q0: ?Sized,
     Q1: ?Sized,
 {
     stack: Box<
         IterStack<
             ProductIter<'a, 'b, (Key0, Value0), (Key1, Value1)>,
-            ProductIter<'a, 'b, Node<N0, D0, Key0, Value0>, Node<N1, D1, Key1, Value1>>,
+            ProductIter<'a, 'b, Node<B0, Key0, Value0>, Node<B1, Key1, Value1>>,
         >,
     >,
     padding0: usize,
@@ -90,27 +77,14 @@ pub struct JoinIter<
     _phantom: PhantomData<(&'a Q0, &'b Q1)>,
 }
 
-impl<
-        'a,
-        'b,
-        N0,
-        N1,
-        const D0: usize,
-        const D1: usize,
-        Key0,
-        Key1,
-        Value0,
-        Value1,
-        Q0,
-        Q1,
-        Filter,
-    > JoinIter<'a, 'b, N0, N1, D0, D1, Key0, Key1, Value0, Value1, Q0, Q1, Filter>
+impl<'a, 'b, B0, B1, Key0, Key1, Value0, Value1, Q0, Q1, Filter>
+    JoinIter<'a, 'b, B0, B1, Key0, Key1, Value0, Value1, Q0, Q1, Filter>
 where
     Key0: Borrow<Q0>,
     Key1: Borrow<Q1>,
     Q0: ?Sized,
     Q1: ?Sized,
-    Filter: JoinFilter<N0, N1, D0, D1, Q0, Q1>,
+    Filter: JoinFilter<B0, B1, Q0, Q1>,
 {
     /// Adds an iterator to the stack to join the nodes. If both nodes are of the same type, the
     /// iterator will join the children of both nodes. Otherwise, the iterator will join the
@@ -123,9 +97,9 @@ where
     /// The levels must be valid for the given nodes.
     unsafe fn start_join(
         &mut self,
-        node0: &'a Node<N0, D0, Key0, Value0>,
+        node0: &'a Node<B0, Key0, Value0>,
         level0: usize,
-        node1: &'b Node<N1, D1, Key1, Value1>,
+        node1: &'b Node<B1, Key1, Value1>,
         level1: usize,
     ) {
         if let Some(height) = NonZeroUsize::new(cmp::max(level0, level1)) {
@@ -155,9 +129,9 @@ where
     /// The levels must be valid for the given nodes.
     pub(crate) unsafe fn new(
         filter: Filter,
-        root0: &'a Node<N0, D0, Key0, Value0>,
+        root0: &'a Node<B0, Key0, Value0>,
         height0: usize,
-        root1: &'b Node<N1, D1, Key1, Value1>,
+        root1: &'b Node<B1, Key1, Value1>,
         height1: usize,
     ) -> Self {
         if !filter.test_bounds(&root0.bounds, &root1.bounds) {
@@ -190,27 +164,14 @@ where
     }
 }
 
-impl<
-        'a,
-        'b,
-        N0,
-        N1,
-        const D0: usize,
-        const D1: usize,
-        Key0,
-        Key1,
-        Value0,
-        Value1,
-        Q0,
-        Q1,
-        Filter,
-    > Iterator for JoinIter<'a, 'b, N0, N1, D0, D1, Key0, Key1, Value0, Value1, Q0, Q1, Filter>
+impl<'a, 'b, B0, B1, Key0, Key1, Value0, Value1, Q0, Q1, Filter> Iterator
+    for JoinIter<'a, 'b, B0, B1, Key0, Key1, Value0, Value1, Q0, Q1, Filter>
 where
     Key0: Borrow<Q0>,
     Key1: Borrow<Q1>,
     Q0: ?Sized,
     Q1: ?Sized,
-    Filter: JoinFilter<N0, N1, D0, D1, Q0, Q1>,
+    Filter: JoinFilter<B0, B1, Q0, Q1>,
 {
     type Item = (&'a (Key0, Value0), &'b (Key1, Value1));
 

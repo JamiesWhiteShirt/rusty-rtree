@@ -7,12 +7,12 @@ use std::{
 use array_init::from_iter;
 use itertools::izip;
 
-use crate::{bounds::Bounds, vector::Vector};
+use crate::{bounds::AABB, vector::Vector};
 
 /// A trait for defining a weak ordering of R-tree keys by a metric. In addition
 /// to providing a metric for keys, a ranking can also provide a lower bound
 /// for the metric for [`Bounds`] containing a set of keys.
-pub trait Ranking<N, const D: usize, Key>
+pub trait Ranking<B, Key>
 where
     Key: ?Sized,
 {
@@ -33,7 +33,7 @@ where
     /// It must also hold that for all bounds `b1` and `b2`, if `b1` contains
     /// `b2`, then `bounds_min(b1) <= bounds_min(b2)`. In other words, removing
     /// keys from a set of keys cannot decrease the lower bound for the metric.
-    fn bounds_min(&self, bounds: &Bounds<N, D>) -> Self::Metric;
+    fn bounds_min(&self, bounds: &B) -> Self::Metric;
 
     /// Returns the metric for the given key.
     fn rank_key(&self, key: &Key) -> Self::Metric;
@@ -87,7 +87,7 @@ where
     }
 }
 
-impl<N, const D: usize, Key, T> Ranking<T, D, Key> for EuclideanDistanceRanking<N, D, Key>
+impl<N, const D: usize, Key, T> Ranking<AABB<T, D>, Key> for EuclideanDistanceRanking<N, D, Key>
 where
     Key: ?Sized + PointDistance<N, D>,
     N: Ord + Clone + Sub<Output = N> + Mul<Output = N> + Add<Output = N>,
@@ -95,7 +95,7 @@ where
 {
     type Metric = N;
 
-    fn bounds_min(&self, bounds: &Bounds<T, D>) -> Self::Metric {
+    fn bounds_min(&self, bounds: &AABB<T, D>) -> Self::Metric {
         let closest_point: Vector<N, D> = Vector(
             from_iter(
                 izip!(&bounds.min.0, &bounds.max.0, &self.point.0).map(|(min, max, pt)| {

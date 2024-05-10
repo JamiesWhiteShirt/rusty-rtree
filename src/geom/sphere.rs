@@ -1,7 +1,7 @@
 use std::ops::{Add, Sub};
 
 use crate::{
-    bounds::{Bounded, Bounds},
+    bounds::{Bounded, AABB},
     intersects::Intersects,
     vector::Vector,
 };
@@ -11,12 +11,12 @@ pub struct Sphere<N, const D: usize> {
     pub radius: N,
 }
 
-impl<N, const D: usize> Bounded<N, D> for Sphere<N, D>
+impl<N, const D: usize> Bounded<AABB<N, D>> for Sphere<N, D>
 where
-    N: Clone + Sub<Output = N> + Add<Output = N>,
+    N: Clone + Sub<Output = N> + Add<Output = N> + Ord + num_traits::Bounded,
 {
-    fn bounds(&self) -> Bounds<N, D> {
-        Bounds {
+    fn bounds(&self) -> AABB<N, D> {
+        AABB {
             min: self
                 .center
                 .clone()

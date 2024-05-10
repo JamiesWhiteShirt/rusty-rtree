@@ -2,11 +2,11 @@ use std::{cmp::Ordering, ops::Sub};
 
 use noisy_float::types::N64;
 
-use crate::bounds::{Bounded, Bounds};
+use crate::bounds::{Bounded, Bounds, AABB};
 
-impl<N, const D: usize> Bounds<N, D>
+impl<N, const D: usize> AABB<N, D>
 where
-    N: Ord + Clone + Sub<Output = N> + Into<f64>,
+    N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
 {
     fn volume_increase_of_min_bounds(&self, other: &Self) -> N64 {
         Bounds::union(self, other).volume() - self.volume()
@@ -15,11 +15,11 @@ where
 
 pub fn minimal_volume_increase<N, const D: usize, Value>(
     children: impl IntoIterator<Item = Value>,
-    bounds: &Bounds<N, D>,
+    bounds: &AABB<N, D>,
 ) -> Option<Value>
 where
-    N: Ord + Clone + Sub<Output = N> + Into<f64>,
-    Value: Bounded<N, D>,
+    N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+    Value: Bounded<AABB<N, D>>,
 {
     children.into_iter().min_by(|lhs, rhs| {
         // Optimize for minimal volume increase

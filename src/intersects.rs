@@ -1,6 +1,6 @@
 use std::ops::Sub;
 
-use crate::{bounds::Bounds, vector::Vector};
+use crate::{bounds::AABB, vector::Vector};
 
 pub trait Intersects<T> {
     fn intersects(&self, rhs: &T) -> bool;
@@ -31,7 +31,7 @@ fn f64_max(lhs: f64, rhs: f64) -> f64 {
 /// This is equivalent because in all comparisons, both operands are inversely
 /// scaled with the magnitude of the delta.
 pub(crate) fn ray_bounds_intersect<N, const D: usize>(
-    b: &Bounds<N, D>,
+    b: &AABB<N, D>,
     origin: &Vector<N, D>,
     delta: &Vector<N, D>,
 ) -> bool
@@ -58,7 +58,7 @@ where
 }
 
 pub(crate) fn line_bounds_intersect<N, const D: usize>(
-    b: &Bounds<N, D>,
+    b: &AABB<N, D>,
     origin: &Vector<N, D>,
     delta: &Vector<N, D>,
 ) -> bool
@@ -82,11 +82,11 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::{bounds::Bounds, intersects::line_bounds_intersect, vector::Vector};
+    use crate::{bounds::AABB, intersects::line_bounds_intersect, vector::Vector};
 
     #[test]
     fn test_line_bounds_intersect() {
-        let bounds: Bounds<i32, 2> = Bounds {
+        let bounds: AABB<i32, 2> = AABB {
             min: Vector([0, 0]),
             max: Vector([5, 5]),
         };
@@ -98,7 +98,7 @@ mod test {
 
     #[test]
     fn test_line_bounds_not_intersect() {
-        let bounds: Bounds<i32, 2> = Bounds {
+        let bounds: AABB<i32, 2> = AABB {
             min: Vector([0, 0]),
             max: Vector([4, 4]),
         };

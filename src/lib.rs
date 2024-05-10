@@ -18,7 +18,8 @@ mod split;
 mod util;
 pub mod vector;
 
-use bounds::Bounded;
+use bounds::{Bounded, Bounds, AABB};
+use contains::Contains;
 use filter::{JoinFilter, SpatialFilter};
 use iter::{FilterIter, TreeIter, TreeIterMut};
 use node::{Node, NodeOps, NodeRef, NodeRefMut, RootNodeRefMut};
@@ -51,20 +52,16 @@ pub struct RTreeConfig {
 /// # Safety
 ///
 /// Here be dragons. The R-tree is implemented using unsafe code.
-pub struct RTree<N, const D: usize, Key, Value>
-where
-    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-    Key: Bounded<N, D> + Eq,
-{
+pub struct RTree<B, Key, Value> {
     config: RTreeConfig,
     height: usize,
-    root: Node<N, D, Key, Value>,
+    root: Node<B, Key, Value>,
 }
 
-impl<N, const D: usize, Key, Value> Debug for RTree<N, D, Key, Value>
+impl<B, Key, Value> Debug for RTree<B, Key, Value>
 where
-    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64> + Debug,
-    Key: Bounded<N, D> + Eq + Debug,
+    B: Debug,
+    Key: Debug,
     Value: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -75,11 +72,7 @@ where
     }
 }
 
-impl<N, const D: usize, Key, Value> Drop for RTree<N, D, Key, Value>
-where
-    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-    Key: Bounded<N, D> + Eq,
-{
+impl<B, Key, Value> Drop for RTree<B, Key, Value> {
     fn drop(&mut self) {
         let ops = self.ops();
         unsafe {
@@ -88,10 +81,10 @@ where
     }
 }
 
-impl<N, const D: usize, Key, Value> Clone for RTree<N, D, Key, Value>
+impl<B, Key, Value> Clone for RTree<B, Key, Value>
 where
-    N: Ord + num_traits::Bounded + Sub<Output = N> + Into<f64> + Clone,
-    Key: Bounded<N, D> + Eq + Clone,
+    B: Clone,
+    Key: Clone,
     Value: Clone,
 {
     fn clone(&self) -> Self {
@@ -105,32 +98,41 @@ where
     }
 }
 
-impl<N, const D: usize, Key, Value> RTree<N, D, Key, Value>
-where
-    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-    Key: Bounded<N, D> + Eq,
-{
+impl<B, Key, Value> RTree<B, Key, Value> {
     fn ops(&self) -> NodeOps {
         NodeOps::new_ops(self.config.min_children, self.config.max_children)
     }
 
-    fn root_ref_mut(&mut self) -> RootNodeRefMut<N, D, Key, Value> {
+    fn root_ref_mut(&mut self) -> RootNodeRefMut<B, Key, Value> {
         let ops = self.ops();
         unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) }
     }
 
-    fn node_ref_mut(&mut self) -> NodeRefMut<N, D, Key, Value> {
+    fn node_ref_mut(&mut self) -> NodeRefMut<B, Key, Value> {
         let ops = self.ops();
         unsafe { ops.wrap_ref_mut(&mut self.root, self.height) }
     }
 
-    fn node_ref(&self) -> NodeRef<N, D, Key, Value> {
+    fn node_ref(&self) -> NodeRef<B, Key, Value> {
         let ops = self.ops();
         unsafe { ops.wrap_ref(&self.root, self.height) }
     }
 
+    /// Returns an iterator over all entries in the R-tree.
+    pub fn iter<'a>(&'a self) -> iter::Iter<Box<TreeIter<'a, B, Key, Value>>> {
+        unsafe { iter::Iter::new(self.height, &self.root) }
+    }
+
+    /// Returns a mutable iterator over all entries in the R-tree.
+    pub fn iter_mut<'a>(&'a mut self) -> iter::IterMut<Box<TreeIterMut<'a, B, Key, Value>>> {
+        unsafe { iter::IterMut::new(self.height, &mut self.root) }
+    }
+
     /// Returns a new empty R-tree.
-    pub fn new(config: RTreeConfig) -> RTree<N, D, Key, Value> {
+    pub fn new(config: RTreeConfig) -> RTree<B, Key, Value>
+    where
+        B: Bounds,
+    {
         let ops = NodeOps::new_ops(config.min_children, config.max_children);
         return RTree {
             height: 0,
@@ -139,40 +141,30 @@ where
         };
     }
 
-    /// Returns an iterator over all entries in the R-tree.
-    pub fn iter<'a>(&'a self) -> iter::Iter<Box<TreeIter<'a, N, D, Key, Value>>> {
-        unsafe { iter::Iter::new(self.height, &self.root) }
-    }
-
-    /// Returns a mutable iterator over all entries in the R-tree.
-    pub fn iter_mut<'a>(&'a mut self) -> iter::IterMut<Box<TreeIterMut<'a, N, D, Key, Value>>> {
-        unsafe { iter::IterMut::new(self.height, &mut self.root) }
-    }
-
     /// Returns an iterator over all entries in the R-tree using a spatial
     /// filter.
     pub fn filter_iter<'a, Q, Filter>(
         &'a self,
         filter: Filter,
-    ) -> FilterIter<Box<TreeIter<'a, N, D, Key, Value>>, Q, Filter>
+    ) -> FilterIter<Box<TreeIter<'a, B, Key, Value>>, Q, Filter>
     where
         Key: Borrow<Q>,
         Q: ?Sized,
-        Filter: SpatialFilter<N, D, Q>,
+        Filter: SpatialFilter<B, Q>,
     {
         unsafe { FilterIter::new(self.height, &self.root, filter) }
     }
 
     /// Returns a mutable iterator over all entries in the R-tree using a
     /// spatial filter.
-    pub fn filter_iter_mut<'a, Q, Filter: SpatialFilter<N, D, Q>>(
+    pub fn filter_iter_mut<'a, Q, Filter: SpatialFilter<B, Q>>(
         &'a mut self,
         filter: Filter,
-    ) -> iter::FilterIterMut<Box<TreeIterMut<'a, N, D, Key, Value>>, Q, Filter>
+    ) -> iter::FilterIterMut<Box<TreeIterMut<'a, B, Key, Value>>, Q, Filter>
     where
         Key: Borrow<Q>,
         Q: ?Sized,
-        Filter: SpatialFilter<N, D, Q>,
+        Filter: SpatialFilter<B, Q>,
     {
         unsafe { iter::FilterIterMut::new(self.height, &mut self.root, filter) }
     }
@@ -183,7 +175,7 @@ where
     /// first entry is returned.
     pub fn min_by<R>(&self, ranking: R) -> Option<(&Key, &Value)>
     where
-        R: Ranking<N, D, Key>,
+        R: Ranking<B, Key>,
     {
         self.iter_asc_by(ranking).next()
     }
@@ -194,7 +186,7 @@ where
     /// key exist, the first entry is returned.
     pub fn min_by_mut<R>(&mut self, ranking: R) -> Option<(&Key, &mut Value)>
     where
-        R: Ranking<N, D, Key>,
+        R: Ranking<B, Key>,
     {
         self.iter_asc_by_mut(ranking).next()
     }
@@ -210,7 +202,7 @@ where
     /// by `bounds`, `rank_key(k)` is None.
     pub fn filter_min_by<R, S>(&self, ranking: R) -> Option<(&Key, &Value)>
     where
-        R: Ranking<N, D, Key, Metric = Option<S>>,
+        R: Ranking<B, Key, Metric = Option<S>>,
         S: Ord,
     {
         self.filter_iter_asc_by(ranking).next()
@@ -227,7 +219,7 @@ where
     /// by `bounds`, `rank_key(k)` is None.
     pub fn filter_min_by_mut<R, S>(&mut self, ranking: R) -> Option<(&Key, &mut Value)>
     where
-        R: Ranking<N, D, Key, Metric = Option<S>>,
+        R: Ranking<B, Key, Metric = Option<S>>,
         S: Ord,
     {
         self.filter_iter_asc_by_mut(ranking).next()
@@ -237,9 +229,9 @@ where
     /// order_ according to the given [`Ranking`].
     ///
     /// To only get the entry with the least key, use [`RTree::min_by`].
-    pub fn iter_asc_by<R>(&self, ranking: R) -> iter::SortedIter<N, D, Key, Value, R>
+    pub fn iter_asc_by<R>(&self, ranking: R) -> iter::SortedIter<B, Key, Value, R>
     where
-        R: Ranking<N, D, Key>,
+        R: Ranking<B, Key>,
     {
         unsafe { iter::SortedIter::new(self.height, &self.root, ranking) }
     }
@@ -248,9 +240,9 @@ where
     /// key order_ according to the given [`Ranking`].
     ///
     /// To only get the entry with the least key, use [`RTree::min_by_mut`].
-    pub fn iter_asc_by_mut<R>(&mut self, ranking: R) -> iter::SortedIterMut<N, D, Key, Value, R>
+    pub fn iter_asc_by_mut<R>(&mut self, ranking: R) -> iter::SortedIterMut<B, Key, Value, R>
     where
-        R: Ranking<N, D, Key>,
+        R: Ranking<B, Key>,
     {
         unsafe { iter::SortedIterMut::new(self.height, &mut self.root, ranking) }
     }
@@ -268,9 +260,9 @@ where
     pub fn filter_iter_asc_by<R, S>(
         &self,
         ranking: R,
-    ) -> iter::FilterSortedIter<N, D, Key, Value, R, S>
+    ) -> iter::FilterSortedIter<B, Key, Value, R, S>
     where
-        R: Ranking<N, D, Key, Metric = Option<S>>,
+        R: Ranking<B, Key, Metric = Option<S>>,
         S: Ord,
     {
         unsafe { iter::FilterSortedIter::new(self.height, &self.root, ranking) }
@@ -289,50 +281,119 @@ where
     pub fn filter_iter_asc_by_mut<R, S>(
         &mut self,
         ranking: R,
-    ) -> iter::FilterSortedIterMut<N, D, Key, Value, R, S>
+    ) -> iter::FilterSortedIterMut<B, Key, Value, R, S>
     where
-        R: Ranking<N, D, Key, Metric = Option<S>>,
+        R: Ranking<B, Key, Metric = Option<S>>,
         S: Ord,
     {
         unsafe { iter::FilterSortedIterMut::new(self.height, &mut self.root, ranking) }
     }
 
-    pub fn join<'a, 'b, N1, const D1: usize, Key1, Value1, Q0, Q1, F>(
+    pub fn join<'a, 'b, B1, Key1, Value1, Q0, Q1, F>(
         &'a self,
-        other: &'b RTree<N1, D1, Key1, Value1>,
+        other: &'b RTree<B1, Key1, Value1>,
         filter: F,
-    ) -> join::JoinIter<'a, 'b, N, N1, D, D1, Key, Key1, Value, Value1, Q0, Q1, F>
+    ) -> join::JoinIter<'a, 'b, B, B1, Key, Key1, Value, Value1, Q0, Q1, F>
     where
         Key: Borrow<Q0>,
         Key1: Borrow<Q1>,
         Q0: ?Sized,
         Q1: ?Sized,
-        N1: Ord + num_traits::Bounded + Clone + Sub<Output = N1> + Into<f64>,
-        Key1: Bounded<N1, D1> + Eq,
-        F: JoinFilter<N, N1, D, D1, Q0, Q1>,
+        Key1: Bounded<B1> + Eq,
+        F: JoinFilter<B, B1, Q0, Q1>,
     {
         unsafe { join::JoinIter::new(filter, &self.root, self.height, &other.root, other.height) }
     }
 
-    pub fn left_join<'a, 'b, N1, const D1: usize, Key1, Value1, Q0, Q1, F>(
+    pub fn left_join<'a, 'b, B1, Key1, Value1, Q0, Q1, F>(
         &'a self,
-        other: &'b RTree<N1, D1, Key1, Value1>,
+        other: &'b RTree<B1, Key1, Value1>,
         filter: F,
-    ) -> left_join::LeftJoinIter<'a, 'b, N, N1, D, D1, Key, Key1, Value, Value1, Q0, Q1, F>
+    ) -> left_join::LeftJoinIter<'a, 'b, B, B1, Key, Key1, Value, Value1, Q0, Q1, F>
     where
         Key: Borrow<Q0>,
         Key1: Borrow<Q1>,
         Q0: ?Sized,
         Q1: ?Sized,
-        N1: Ord + num_traits::Bounded + Clone + Sub<Output = N1> + Into<f64>,
-        Key1: Bounded<N1, D1> + Eq,
-        F: JoinFilter<N, N1, D, D1, Q0, Q1>,
+        Key1: Bounded<B1> + Eq,
+        F: JoinFilter<B, B1, Q0, Q1>,
     {
         unsafe {
             left_join::LeftJoinIter::new(filter, &self.root, self.height, &other.root, other.height)
         }
     }
 
+    /// Returns a reference to the value associated with the given key, or `None`
+    /// if no such value exists. If multiple entries with the same key exist, a
+    /// reference to the the value of the first entry is returned.
+    ///
+    /// Borrowing is done using the `Borrow` trait, so the key can be of a
+    /// different type than the key type of the R-tree. The Bounded trait must
+    /// be equivalent for borrowed and owned keys, like Eq, Ord and Hash.
+    pub fn get<Q>(&self, key: &Q) -> Option<&Value>
+    where
+        B: Contains<B>,
+        Key: Borrow<Q>,
+        Q: Eq + Bounded<B> + ?Sized,
+    {
+        self.node_ref().get(key)
+    }
+
+    /// Returns a mutable reference to the value associated with the given key,
+    /// or `None` if no such value exists. If multiple entries with the same key
+    /// exist, a reference to the the value of the first entry is returned.
+    ///
+    /// Borrowing is done using the `Borrow` trait, so the key can be of a
+    /// different type than the key type of the R-tree. The Bounded trait must
+    /// be equivalent for borrowed and owned keys, like Eq, Ord and Hash.
+    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut Value>
+    where
+        B: Contains<B>,
+        Key: Borrow<Q>,
+        Q: Eq + Bounded<B> + ?Sized,
+    {
+        self.node_ref_mut().into_get_mut(key)
+    }
+
+    /// Returns the number of entries in the R-tree.
+    pub fn len(&self) -> usize {
+        let ops = self.ops();
+        let root = unsafe { ops.wrap_ref(&self.root, self.height) };
+        root.len()
+    }
+
+    fn _debug_assert_bvh(&self)
+    where
+        B: Debug + Bounds + Eq,
+        Key: Bounded<B>,
+    {
+        self.node_ref()._debug_assert_bvh();
+    }
+
+    fn _debug_assert_eq(a: &Self, b: &Self)
+    where
+        B: Debug + Eq,
+        Key: Debug + Eq,
+        Value: Debug + Eq,
+    {
+        assert_eq!(a.config, b.config);
+        assert_eq!(a.height, b.height);
+        a.node_ref()._debug_assert_eq(&b.node_ref());
+    }
+
+    fn _debug_assert_min_children(&self)
+    where
+        B: Debug,
+    {
+        self.node_ref()._debug_assert_min_children(true);
+    }
+}
+
+impl<N, const D: usize, Key, Value> RTree<AABB<N, D>, Key, Value>
+where
+    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
+    Key: Bounded<AABB<N, D>> + Eq,
+{
     // Inserts a new key-value pair into the R-tree, ignoring any existing
     // entries with the same key.
     pub fn insert(&mut self, key: Key, value: Value) {
@@ -351,36 +412,6 @@ where
         root.insert_unique(key, value)
     }
 
-    /// Returns a reference to the value associated with the given key, or `None`
-    /// if no such value exists. If multiple entries with the same key exist, a
-    /// reference to the the value of the first entry is returned.
-    ///
-    /// Borrowing is done using the `Borrow` trait, so the key can be of a
-    /// different type than the key type of the R-tree. The Bounded trait must
-    /// be equivalent for borrowed and owned keys, like Eq, Ord and Hash.
-    pub fn get<Q>(&self, key: &Q) -> Option<&Value>
-    where
-        Key: Borrow<Q>,
-        Q: Eq + Bounded<N, D> + ?Sized,
-    {
-        self.node_ref().get(key)
-    }
-
-    /// Returns a mutable reference to the value associated with the given key,
-    /// or `None` if no such value exists. If multiple entries with the same key
-    /// exist, a reference to the the value of the first entry is returned.
-    ///
-    /// Borrowing is done using the `Borrow` trait, so the key can be of a
-    /// different type than the key type of the R-tree. The Bounded trait must
-    /// be equivalent for borrowed and owned keys, like Eq, Ord and Hash.
-    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut Value>
-    where
-        Key: Borrow<Q>,
-        Q: Eq + Bounded<N, D> + ?Sized,
-    {
-        self.node_ref_mut().into_get_mut(key)
-    }
-
     /// Removes the entry with the given key, returning the value of the entry
     /// if it existed. If multiple entries with the same key exist, the first
     /// entry is removed.
@@ -391,64 +422,30 @@ where
     pub fn remove<Q>(&mut self, key: &Q) -> Option<Value>
     where
         Key: Borrow<Q>,
-        Q: Eq + Bounded<N, D> + ?Sized,
+        Q: Eq + Bounded<AABB<N, D>> + ?Sized,
     {
         self.root_ref_mut().remove(key)
     }
-
-    /// Returns the number of entries in the R-tree.
-    pub fn len(&self) -> usize {
-        let ops = self.ops();
-        let root = unsafe { ops.wrap_ref(&self.root, self.height) };
-        root.len()
-    }
-
-    fn _debug_assert_bvh(&self)
-    where
-        N: Debug,
-    {
-        self.node_ref()._debug_assert_bvh();
-    }
-
-    fn _debug_assert_eq(a: &Self, b: &Self)
-    where
-        N: Debug + Eq,
-        Key: Debug + Eq,
-        Value: Debug + Eq,
-    {
-        assert_eq!(a.config, b.config);
-        assert_eq!(a.height, b.height);
-        a.node_ref()._debug_assert_eq(&b.node_ref());
-    }
-
-    fn _debug_assert_min_children(&self)
-    where
-        N: Debug,
-    {
-        self.node_ref()._debug_assert_min_children(true);
-    }
 }
 
-impl<'a, N, const D: usize, Key, Value> IntoIterator for &'a RTree<N, D, Key, Value>
+impl<'a, B, Key, Value> IntoIterator for &'a RTree<B, Key, Value>
 where
-    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-    Key: Bounded<N, D> + Eq,
+    Key: Bounded<B>,
 {
     type Item = (&'a Key, &'a Value);
-    type IntoIter = iter::Iter<Box<TreeIter<'a, N, D, Key, Value>>>;
+    type IntoIter = iter::Iter<Box<TreeIter<'a, B, Key, Value>>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
 
-impl<'a, N, const D: usize, Key, Value> IntoIterator for &'a mut RTree<N, D, Key, Value>
+impl<'a, B, Key, Value> IntoIterator for &'a mut RTree<B, Key, Value>
 where
-    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-    Key: Bounded<N, D> + Eq,
+    Key: Bounded<B>,
 {
     type Item = (&'a Key, &'a mut Value);
-    type IntoIter = iter::IterMut<Box<TreeIterMut<'a, N, D, Key, Value>>>;
+    type IntoIter = iter::IterMut<Box<TreeIterMut<'a, B, Key, Value>>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter_mut()
@@ -487,18 +484,18 @@ mod tests {
     use crate::vector::Vector;
     use crate::RTreeConfig;
 
-    use super::bounds::Bounds;
+    use super::bounds::AABB;
     use super::RTree;
 
     #[test]
     fn insert() {
-        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, ()>::new(RTreeConfig {
+        let mut tree = RTree::<AABB<i32, 2>, AABB<i32, 2>, ()>::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
 
         tree.insert(
-            Bounds {
+            AABB {
                 min: Vector([0, 0]),
                 max: Vector([1, 1]),
             },
@@ -506,7 +503,7 @@ mod tests {
         );
 
         tree.insert(
-            Bounds {
+            AABB {
                 min: Vector([2, 0]),
                 max: Vector([3, 1]),
             },
@@ -514,7 +511,7 @@ mod tests {
         );
 
         tree.insert(
-            Bounds {
+            AABB {
                 min: Vector([0, 2]),
                 max: Vector([1, 3]),
             },
@@ -522,7 +519,7 @@ mod tests {
         );
 
         tree.insert(
-            Bounds {
+            AABB {
                 min: Vector([2, 2]),
                 max: Vector([3, 3]),
             },
@@ -530,7 +527,7 @@ mod tests {
         );
 
         tree.insert(
-            Bounds {
+            AABB {
                 min: Vector([0, 2]),
                 max: Vector([0, 2]),
             },
@@ -538,7 +535,7 @@ mod tests {
         );
 
         tree.insert(
-            Bounds {
+            AABB {
                 min: Vector([1, 3]),
                 max: Vector([1, 3]),
             },
@@ -548,12 +545,12 @@ mod tests {
 
     #[test]
     fn get() {
-        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, bool>::new(RTreeConfig {
+        let mut tree = RTree::<AABB<i32, 2>, AABB<i32, 2>, bool>::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
 
-        let key = Bounds {
+        let key = AABB {
             min: Vector([0, 0]),
             max: Vector([1, 1]),
         };
@@ -564,12 +561,12 @@ mod tests {
 
     #[test]
     fn get_mut() {
-        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, bool>::new(RTreeConfig {
+        let mut tree = RTree::<AABB<i32, 2>, AABB<i32, 2>, bool>::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
 
-        let key = Bounds {
+        let key = AABB {
             min: Vector([0, 0]),
             max: Vector([1, 1]),
         };
@@ -582,7 +579,7 @@ mod tests {
 
     #[test]
     fn insert_unique() {
-        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, u16>::new(RTreeConfig {
+        let mut tree = RTree::<AABB<i32, 2>, AABB<i32, 2>, u16>::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
@@ -596,7 +593,7 @@ mod tests {
             for i in 0..50 {
                 let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
                 let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
-                tree.insert(Bounds { min, max }, i);
+                tree.insert(AABB { min, max }, i);
                 tree._debug_assert_bvh();
                 assert_eq!(tree.len(), usize::from(i + 1))
             }
@@ -604,7 +601,7 @@ mod tests {
 
         let len_before = tree.len();
 
-        let key = Bounds {
+        let key = AABB {
             min: Vector([-1, -1]),
             max: Vector([-1, -1]),
         };
@@ -623,8 +620,8 @@ mod tests {
 
     #[test]
     fn clone() {
-        let mut tree: RTree<i32, 2, Bounds<i32, 2>, i32> =
-            RTree::<i32, 2, Bounds<i32, 2>, i32>::new(RTreeConfig {
+        let mut tree: RTree<AABB<i32, 2>, AABB<i32, 2>, i32> =
+            RTree::<AABB<i32, 2>, AABB<i32, 2>, i32>::new(RTreeConfig {
                 max_children: 4,
                 min_children: 2,
             });
@@ -638,7 +635,7 @@ mod tests {
             for i in 0..50 {
                 let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
                 let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
-                tree.insert(Bounds { min, max }, i);
+                tree.insert(AABB { min, max }, i);
                 tree._debug_assert_bvh();
             }
         }
@@ -649,7 +646,7 @@ mod tests {
 
     #[test]
     fn remove() {
-        let mut tree: RTree<i32, 2, Bounds<i32, 2>, i32> = RTree::new(RTreeConfig {
+        let mut tree: RTree<AABB<i32, 2>, AABB<i32, 2>, i32> = RTree::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
@@ -663,7 +660,7 @@ mod tests {
             for i in 0..50 {
                 let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
                 let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
-                tree.insert(Bounds { min, max }, i);
+                tree.insert(AABB { min, max }, i);
                 tree._debug_assert_bvh();
                 tree._debug_assert_min_children();
             }
@@ -678,7 +675,7 @@ mod tests {
             for i in 0..50 {
                 let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
                 let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
-                assert_eq!(tree.remove(&Bounds { min, max }), Some(i));
+                assert_eq!(tree.remove(&AABB { min, max }), Some(i));
                 tree._debug_assert_bvh();
             }
         }
@@ -694,20 +691,20 @@ mod tests {
             0xDE, 0xAD, 0xBE, 0xEF,
         ]);
 
-        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, i32>::new(RTreeConfig {
+        let mut tree = RTree::<AABB<i32, 2>, AABB<i32, 2>, i32>::new(RTreeConfig {
             max_children,
             min_children,
         });
         for i in 0..10000 {
             let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
             let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
-            tree.insert(Bounds { min, max }, i);
+            tree.insert(AABB { min, max }, i);
         }
 
         bencher.iter(|| {
             let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
             let max = min + Vector([10, 10]);
-            tree.insert(Bounds { min, max }, 0)
+            tree.insert(AABB { min, max }, 0)
         });
     }
 
@@ -759,21 +756,20 @@ mod tests {
             0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
             0xDE, 0xAD, 0xBE, 0xEF,
         ]);
-        let mut tree = RTree::<i32, 2, Bounds<i32, 2>, i32>::new(RTreeConfig {
+        let mut tree = RTree::<AABB<i32, 2>, AABB<i32, 2>, i32>::new(RTreeConfig {
             max_children,
             min_children: max_children / 2,
         });
         for i in 0..10000 {
             let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
             let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
-            tree.insert(Bounds { min, max }, i);
+            tree.insert(AABB { min, max }, i);
         }
 
         bencher.iter(|| {
             let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
             let max = min + Vector([10, 10]);
-            for entry in tree.filter_iter(BoundedIntersectsFilter::new_bounded(Bounds { min, max }))
-            {
+            for entry in tree.filter_iter(BoundedIntersectsFilter::new_bounded(AABB { min, max })) {
                 black_box(entry);
             }
         });
@@ -815,7 +811,7 @@ mod tests {
 
     #[test]
     fn cosmic() -> Result<(), Box<dyn Error>> {
-        let mut stars = RTree::<N32, 3, Vector<N32, 3>, StarInfo>::new(RTreeConfig {
+        let mut stars = RTree::<AABB<N32, 3>, Vector<N32, 3>, StarInfo>::new(RTreeConfig {
             min_children: 4,
             max_children: 32,
         });
@@ -839,12 +835,12 @@ mod tests {
             center: sol_pos,
             radius: n32(100.0),
         };
-        let bounds: Bounds<N32, 3> = Bounds {
+        let bounds: AABB<N32, 3> = AABB {
             min: sol_pos.into_map(|coord| coord - 100.0),
             max: sol_pos.into_map(|coord| coord + 100.0),
         };
 
-        let mut star_lines = RTree::<N32, 3, Line<N32, 3>, ()>::new(RTreeConfig {
+        let mut star_lines = RTree::<AABB<N32, 3>, Line<N32, 3>, ()>::new(RTreeConfig {
             min_children: 4,
             max_children: 32,
         });
@@ -885,9 +881,9 @@ mod tests {
             _unit: CountedUnit<'a>,
         }
 
-        impl<'a> Bounded<u32, 2> for Key<'a> {
-            fn bounds(&self) -> Bounds<u32, 2> {
-                Bounds {
+        impl<'a> Bounded<AABB<u32, 2>> for Key<'a> {
+            fn bounds(&self) -> AABB<u32, 2> {
+                AABB {
                     min: Vector([self.i, self.i]),
                     max: Vector([self.i + 1, self.i + 1]),
                 }
@@ -904,7 +900,7 @@ mod tests {
 
         let value_count = RefCell::new(0);
         let key_count = RefCell::new(0);
-        let mut tree = RTree::<u32, 2, Key, CountedUnit>::new(RTreeConfig {
+        let mut tree = RTree::<AABB<u32, 2>, Key, CountedUnit>::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
@@ -928,7 +924,7 @@ mod tests {
 
     #[test]
     fn sorted_iter_asc() {
-        let mut tree = RTree::<i32, 2, Vector<i32, 2>, ()>::new(RTreeConfig {
+        let mut tree = RTree::<AABB<i32, 2>, Vector<i32, 2>, ()>::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
@@ -979,7 +975,7 @@ mod tests {
             0xDE, 0xAD, 0xBE, 0xEF,
         ]);
         let tree0 = {
-            let mut tree = RTree::<i32, 2, Vector<i32, 2>, usize>::new(RTreeConfig {
+            let mut tree = RTree::<AABB<i32, 2>, Vector<i32, 2>, usize>::new(RTreeConfig {
                 max_children: 4,
                 min_children: 2,
             });
@@ -989,7 +985,7 @@ mod tests {
             tree
         };
         let tree1 = {
-            let mut tree = RTree::<i32, 2, Vector<i32, 2>, usize>::new(RTreeConfig {
+            let mut tree = RTree::<AABB<i32, 2>, Vector<i32, 2>, usize>::new(RTreeConfig {
                 max_children: 4,
                 min_children: 2,
             });
@@ -1002,11 +998,12 @@ mod tests {
         #[derive(Clone)]
         struct DistanceFilter(N64);
 
-        impl<N, const D: usize> JoinFilter<N, N, D, D, Vector<N, D>, Vector<N, D>> for DistanceFilter
+        impl<N, const D: usize> JoinFilter<AABB<N, D>, AABB<N, D>, Vector<N, D>, Vector<N, D>>
+            for DistanceFilter
         where
             N: Ord + Clone + Add<Output = N> + Sub<Output = N> + Mul<Output = N> + Into<f64>,
         {
-            fn test_bounds(&self, bounds0: &Bounds<N, D>, bounds1: &Bounds<N, D>) -> bool {
+            fn test_bounds(&self, bounds0: &AABB<N, D>, bounds1: &AABB<N, D>) -> bool {
                 bounds0.sq_dist_to(bounds1) < self.0 * self.0
             }
 

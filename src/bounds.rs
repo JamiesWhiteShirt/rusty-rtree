@@ -1,40 +1,45 @@
-use std::{
-    array, cmp,
-    ops::{Index, Sub},
-};
+use std::{array, cmp, ops::Sub};
 
 use array_init::from_iter;
 use itertools::izip;
 use noisy_float::types::{n64, N64};
 
 use crate::{
-    contains::Contains, geom::line::Line, geom::ray::Ray, intersects::Intersects, vector::Vector,
+    contains::Contains,
+    geom::{line::Line, ray::Ray},
+    intersects::Intersects,
+    vector::Vector,
 };
 
-pub trait Bounded<N, const D: usize> {
-    fn bounds(&self) -> Bounds<N, D>;
+pub trait Bounds: Sized + Contains<Self> {
+    fn empty() -> Self;
+
+    fn union(lhs: &Self, rhs: &Self) -> Self;
+
+    fn union_all(bounds: impl IntoIterator<Item = Self>) -> Self;
+}
+
+pub trait Bounded<B> {
+    fn bounds(&self) -> B;
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub struct Bounds<N, const D: usize> {
+pub struct AABB<N, const D: usize> {
     pub min: Vector<N, D>,
     pub max: Vector<N, D>,
 }
 
-impl<N, const D: usize> Bounds<N, D> {
-    pub fn empty() -> Bounds<N, D>
-    where
-        N: num_traits::Bounded,
-    {
+impl<N, const D: usize> Bounds for AABB<N, D>
+where
+    N: Ord + num_traits::Bounded + Clone,
+{
+    fn empty() -> AABB<N, D> {
         let min = Vector(array::from_fn(|_| N::max_value()));
         let max = Vector(array::from_fn(|_| N::min_value()));
-        Bounds { min, max }
+        AABB { min, max }
     }
 
-    pub fn union(lhs: &Bounds<N, D>, rhs: &Bounds<N, D>) -> Bounds<N, D>
-    where
-        N: Ord + Clone,
-    {
+    fn union(lhs: &AABB<N, D>, rhs: &AABB<N, D>) -> AABB<N, D> {
         let min = Vector(
             from_iter(
                 lhs.min
@@ -51,20 +56,19 @@ impl<N, const D: usize> Bounds<N, D> {
             )
             .unwrap(),
         );
-        Bounds { min, max }
+        AABB { min, max }
     }
 
-    pub fn union_all(bounds: impl IntoIterator<Item = Bounds<N, D>>) -> Bounds<N, D>
-    where
-        N: Ord + num_traits::Bounded + Clone,
-    {
-        let mut res = Bounds::empty();
+    fn union_all(bounds: impl IntoIterator<Item = AABB<N, D>>) -> AABB<N, D> {
+        let mut res = AABB::empty();
         for bounds in bounds {
             res = Self::union(&res, &bounds);
         }
         res
     }
+}
 
+impl<N, const D: usize> AABB<N, D> {
     pub fn volume(&self) -> N64
     where
         N: Clone + Sub<Output = N> + Into<f64>,
@@ -81,7 +85,7 @@ impl<N, const D: usize> Bounds<N, D> {
             .unwrap()
     }
 
-    pub fn sq_dist_to(&self, other: &Bounds<N, D>) -> N64
+    pub fn sq_dist_to(&self, other: &AABB<N, D>) -> N64
     where
         N: Clone + Sub<Output = N> + Into<f64>,
     {
@@ -106,22 +110,22 @@ impl<N, const D: usize> Bounds<N, D> {
     }
 }
 
-impl<N, const D: usize> Eq for Bounds<N, D> where N: Eq {}
+impl<N, const D: usize> Eq for AABB<N, D> where N: Eq {}
 
-impl<N, const D: usize> Bounded<N, D> for Bounds<N, D>
+impl<N, const D: usize> Bounded<AABB<N, D>> for AABB<N, D>
 where
-    N: Clone,
+    N: Ord + Clone + num_traits::Bounded,
 {
-    fn bounds(&self) -> Bounds<N, D> {
+    fn bounds(&self) -> AABB<N, D> {
         self.clone()
     }
 }
 
-impl<N, const D: usize> Intersects<Bounds<N, D>> for Bounds<N, D>
+impl<N, const D: usize> Intersects<AABB<N, D>> for AABB<N, D>
 where
     N: Ord,
 {
-    fn intersects(&self, rhs: &Bounds<N, D>) -> bool {
+    fn intersects(&self, rhs: &AABB<N, D>) -> bool {
         self.min
             .zip(&rhs.max)
             .all(|(lhs_min, rhs_max)| lhs_min <= rhs_max)
@@ -132,7 +136,7 @@ where
     }
 }
 
-impl<N, const D: usize> Intersects<Vector<N, D>> for Bounds<N, D>
+impl<N, const D: usize> Intersects<Vector<N, D>> for AABB<N, D>
 where
     N: Ord,
 {
@@ -147,7 +151,7 @@ where
     }
 }
 
-impl<N, const D: usize> Intersects<Ray<N, D>> for Bounds<N, D>
+impl<N, const D: usize> Intersects<Ray<N, D>> for AABB<N, D>
 where
     N: Clone + Sub<Output = N> + Into<f64>,
 {
@@ -156,7 +160,7 @@ where
     }
 }
 
-impl<N, const D: usize> Intersects<Line<N, D>> for Bounds<N, D>
+impl<N, const D: usize> Intersects<Line<N, D>> for AABB<N, D>
 where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
 {
@@ -165,7 +169,7 @@ where
     }
 }
 
-impl<N, const D: usize> Contains<Bounds<N, D>> for Bounds<N, D>
+impl<N, const D: usize> Contains<AABB<N, D>> for AABB<N, D>
 where
     N: Ord,
 {
@@ -180,7 +184,7 @@ where
     }
 }
 
-impl<N, const D: usize> Contains<Vector<N, D>> for Bounds<N, D>
+impl<N, const D: usize> Contains<Vector<N, D>> for AABB<N, D>
 where
     N: Ord,
 {
@@ -189,28 +193,20 @@ where
     }
 }
 
-impl<N, const D: usize> Index<usize> for Bounds<N, D> {
-    type Output = Vector<N, D>;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        [&self.min, &self.max][index]
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{intersects::Intersects, vector::Vector};
 
-    use super::Bounds;
+    use super::AABB;
 
     #[test]
     fn test_intersects() {
-        let a: Bounds<i32, 2> = Bounds {
+        let a: AABB<i32, 2> = AABB {
             min: Vector([0, 0]),
             max: Vector([2, 2]),
         };
 
-        let b: Bounds<i32, 2> = Bounds {
+        let b: AABB<i32, 2> = AABB {
             min: Vector([1, 1]),
             max: Vector([3, 3]),
         };

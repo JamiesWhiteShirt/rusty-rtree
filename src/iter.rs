@@ -9,7 +9,6 @@ use std::{
 };
 
 use crate::{
-    bounds::Bounds,
     filter::{NoFilter, SpatialFilter},
     iter_stack::IterStack,
     node::Node,
@@ -17,31 +16,31 @@ use crate::{
     util::empty_slice,
 };
 
-pub(crate) type TreeIter<'a, N, const D: usize, Key, Value> =
-    IterStack<slice::Iter<'a, (Key, Value)>, slice::Iter<'a, Node<N, D, Key, Value>>>;
+pub(crate) type TreeIter<'a, B, Key, Value> =
+    IterStack<slice::Iter<'a, (Key, Value)>, slice::Iter<'a, Node<B, Key, Value>>>;
 
 pub struct Iter<Stack> {
     stack: Stack,
 }
 
-impl<'a, N, const D: usize, Key, Value, Stack> Iter<Stack>
+impl<'a, B, Key, Value, Stack> Iter<Stack>
 where
-    Stack: DerefMut<Target = TreeIter<'a, N, D, Key, Value>>,
-    Node<N, D, Key, Value>: 'a,
+    Stack: DerefMut<Target = TreeIter<'a, B, Key, Value>>,
+    Node<B, Key, Value>: 'a,
 {
     pub(crate) unsafe fn new_from_stack(stack: Stack) -> Self {
         Self { stack }
     }
 }
 
-impl<'a, N, const D: usize, Key, Value> Iter<Box<TreeIter<'a, N, D, Key, Value>>> {
+impl<'a, B, Key, Value> Iter<Box<TreeIter<'a, B, Key, Value>>> {
     pub(crate) fn new_empty() -> Self {
         Self {
             stack: IterStack::empty_box(),
         }
     }
 
-    pub(crate) unsafe fn new(height: usize, root: &'a Node<N, D, Key, Value>) -> Self {
+    pub(crate) unsafe fn new(height: usize, root: &'a Node<B, Key, Value>) -> Self {
         // Initialize the stack with empty iterators for each level of the tree
         // except the root. In the first iteration, all iterators but the root
         // will act as if they are exhausted, so the stack will be initialized
@@ -59,12 +58,12 @@ impl<'a, N, const D: usize, Key, Value> Iter<Box<TreeIter<'a, N, D, Key, Value>>
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, Stack> Iter<Stack>
+impl<'a, B, Key, Value, Stack> Iter<Stack>
 where
-    Stack: DerefMut<Target = TreeIter<'a, N, D, Key, Value>>,
-    Node<N, D, Key, Value>: 'a,
+    Stack: DerefMut<Target = TreeIter<'a, B, Key, Value>>,
+    Node<B, Key, Value>: 'a,
 {
-    fn next<Q>(&mut self, filter: &mut impl SpatialFilter<N, D, Q>) -> Option<(&'a Key, &'a Value)>
+    fn next<Q>(&mut self, filter: &mut impl SpatialFilter<B, Q>) -> Option<(&'a Key, &'a Value)>
     where
         Key: Borrow<Q>,
         Q: ?Sized,
@@ -102,10 +101,10 @@ where
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, Stack> Iterator for Iter<Stack>
+impl<'a, B, Key, Value, Stack> Iterator for Iter<Stack>
 where
-    Stack: DerefMut<Target = TreeIter<'a, N, D, Key, Value>>,
-    Node<N, D, Key, Value>: 'a,
+    Stack: DerefMut<Target = TreeIter<'a, B, Key, Value>>,
+    Node<B, Key, Value>: 'a,
 {
     type Item = (&'a Key, &'a Value);
 
@@ -123,13 +122,13 @@ where
     _phantom: PhantomData<Q>,
 }
 
-impl<'a, N, const D: usize, Key, Value, Q, F> FilterIter<Box<TreeIter<'a, N, D, Key, Value>>, Q, F>
+impl<'a, B, Key, Value, Q, F> FilterIter<Box<TreeIter<'a, B, Key, Value>>, Q, F>
 where
     Key: Borrow<Q>,
     Q: ?Sized,
-    F: SpatialFilter<N, D, Q>,
+    F: SpatialFilter<B, Q>,
 {
-    pub(crate) unsafe fn new(height: usize, root: &'a Node<N, D, Key, Value>, filter: F) -> Self {
+    pub(crate) unsafe fn new(height: usize, root: &'a Node<B, Key, Value>, filter: F) -> Self {
         Self {
             iter: if filter.test_bounds(&root.borrow().bounds) {
                 Iter::new(height, root)
@@ -142,10 +141,10 @@ where
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, Stack, Q, F> FilterIter<Stack, Q, F>
+impl<'a, B, Key, Value, Stack, Q, F> FilterIter<Stack, Q, F>
 where
-    Stack: DerefMut<Target = TreeIter<'a, N, D, Key, Value>>,
-    Node<N, D, Key, Value>: 'a,
+    Stack: DerefMut<Target = TreeIter<'a, B, Key, Value>>,
+    Node<B, Key, Value>: 'a,
     Q: ?Sized,
 {
     pub(crate) unsafe fn new_from_stack(stack: Stack, filter: F) -> Self {
@@ -157,13 +156,13 @@ where
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, Stack, Q, F> Iterator for FilterIter<Stack, Q, F>
+impl<'a, B, Key, Value, Stack, Q, F> Iterator for FilterIter<Stack, Q, F>
 where
-    Stack: DerefMut<Target = TreeIter<'a, N, D, Key, Value>>,
-    Node<N, D, Key, Value>: 'a,
+    Stack: DerefMut<Target = TreeIter<'a, B, Key, Value>>,
+    Node<B, Key, Value>: 'a,
     Key: Borrow<Q>,
     Q: ?Sized,
-    F: SpatialFilter<N, D, Q>,
+    F: SpatialFilter<B, Q>,
 {
     type Item = (&'a Key, &'a Value);
 
@@ -172,21 +171,21 @@ where
     }
 }
 
-pub(crate) type TreeIterMut<'a, N, const D: usize, Key, Value> =
-    IterStack<slice::IterMut<'a, (Key, Value)>, slice::IterMut<'a, Node<N, D, Key, Value>>>;
+pub(crate) type TreeIterMut<'a, B, Key, Value> =
+    IterStack<slice::IterMut<'a, (Key, Value)>, slice::IterMut<'a, Node<B, Key, Value>>>;
 
 pub struct IterMut<Stack> {
     stack: Stack,
 }
 
-impl<'a, N, const D: usize, Key, Value> IterMut<Box<TreeIterMut<'a, N, D, Key, Value>>> {
+impl<'a, B, Key, Value> IterMut<Box<TreeIterMut<'a, B, Key, Value>>> {
     pub(crate) fn new_empty() -> Self {
         Self {
             stack: IterStack::empty_box(),
         }
     }
 
-    pub(crate) unsafe fn new(height: usize, root: &'a mut Node<N, D, Key, Value>) -> Self {
+    pub(crate) unsafe fn new(height: usize, root: &'a mut Node<B, Key, Value>) -> Self {
         // Initialize the stack with empty iterators for each level of the tree
         // except the root. In the first iteration, all iterators but the root
         // will act as if they are exhausted, so the stack will be initialized
@@ -204,15 +203,12 @@ impl<'a, N, const D: usize, Key, Value> IterMut<Box<TreeIterMut<'a, N, D, Key, V
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, Stack> IterMut<Stack>
+impl<'a, B, Key, Value, Stack> IterMut<Stack>
 where
-    Stack: DerefMut<Target = TreeIterMut<'a, N, D, Key, Value>>,
-    Node<N, D, Key, Value>: 'a,
+    Stack: DerefMut<Target = TreeIterMut<'a, B, Key, Value>>,
+    Node<B, Key, Value>: 'a,
 {
-    fn next<Q>(
-        &mut self,
-        filter: &mut impl SpatialFilter<N, D, Q>,
-    ) -> Option<(&'a Key, &'a mut Value)>
+    fn next<Q>(&mut self, filter: &mut impl SpatialFilter<B, Q>) -> Option<(&'a Key, &'a mut Value)>
     where
         Key: Borrow<Q>,
         Q: ?Sized,
@@ -250,10 +246,10 @@ where
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, Stack> Iterator for IterMut<Stack>
+impl<'a, B, Key, Value, Stack> Iterator for IterMut<Stack>
 where
-    Stack: DerefMut<Target = TreeIterMut<'a, N, D, Key, Value>>,
-    Node<N, D, Key, Value>: 'a,
+    Stack: DerefMut<Target = TreeIterMut<'a, B, Key, Value>>,
+    Node<B, Key, Value>: 'a,
 {
     type Item = (&'a Key, &'a mut Value);
 
@@ -271,18 +267,13 @@ where
     _phantom: PhantomData<Q>,
 }
 
-impl<'a, N, const D: usize, Key, Value, Q, F>
-    FilterIterMut<Box<TreeIterMut<'a, N, D, Key, Value>>, Q, F>
+impl<'a, B, Key, Value, Q, F> FilterIterMut<Box<TreeIterMut<'a, B, Key, Value>>, Q, F>
 where
     Key: Borrow<Q>,
     Q: ?Sized,
-    F: SpatialFilter<N, D, Q>,
+    F: SpatialFilter<B, Q>,
 {
-    pub(crate) unsafe fn new(
-        height: usize,
-        root: &'a mut Node<N, D, Key, Value>,
-        filter: F,
-    ) -> Self {
+    pub(crate) unsafe fn new(height: usize, root: &'a mut Node<B, Key, Value>, filter: F) -> Self {
         Self {
             iter: if filter.test_bounds(&root.bounds) {
                 IterMut::new(height, root)
@@ -295,13 +286,13 @@ where
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, Stack, Q, F> Iterator for FilterIterMut<Stack, Q, F>
+impl<'a, B, Key, Value, Stack, Q, F> Iterator for FilterIterMut<Stack, Q, F>
 where
-    Stack: DerefMut<Target = TreeIterMut<'a, N, D, Key, Value>>,
-    Node<N, D, Key, Value>: 'a,
+    Stack: DerefMut<Target = TreeIterMut<'a, B, Key, Value>>,
+    Node<B, Key, Value>: 'a,
     Key: Borrow<Q>,
     Q: ?Sized,
-    F: SpatialFilter<N, D, Q>,
+    F: SpatialFilter<B, Q>,
 {
     type Item = (&'a Key, &'a mut Value);
 
@@ -344,26 +335,26 @@ where
     }
 }
 
-union SortedIterItem<'a, N, const D: usize, Key, Value> {
-    node: &'a Node<N, D, Key, Value>,
+union SortedIterItem<'a, B, Key, Value> {
+    node: &'a Node<B, Key, Value>,
     entry: &'a (Key, Value),
 }
 
-pub struct SortedIter<'a, N, const D: usize, Key, Value, R>
+pub struct SortedIter<'a, B, Key, Value, R>
 where
-    R: Ranking<N, D, Key>,
+    R: Ranking<B, Key>,
 {
     ranking: R,
-    entries: BinaryHeap<Ranked<Reverse<(R::Metric, usize)>, SortedIterItem<'a, N, D, Key, Value>>>,
+    entries: BinaryHeap<Ranked<Reverse<(R::Metric, usize)>, SortedIterItem<'a, B, Key, Value>>>,
 
-    _phantom: PhantomData<Bounds<N, D>>,
+    _phantom: PhantomData<B>,
 }
 
-impl<'a, N, const D: usize, Key, Value, R> SortedIter<'a, N, D, Key, Value, R>
+impl<'a, B, Key, Value, R> SortedIter<'a, B, Key, Value, R>
 where
-    R: Ranking<N, D, Key>,
+    R: Ranking<B, Key>,
 {
-    pub(crate) unsafe fn new(height: usize, root: &'a Node<N, D, Key, Value>, ranking: R) -> Self {
+    pub(crate) unsafe fn new(height: usize, root: &'a Node<B, Key, Value>, ranking: R) -> Self {
         let mut entries = BinaryHeap::new();
         entries.push(Ranked {
             score: Reverse((ranking.bounds_min(&root.bounds), height + 1)),
@@ -378,9 +369,9 @@ where
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, R> Iterator for SortedIter<'a, N, D, Key, Value, R>
+impl<'a, B, Key, Value, R> Iterator for SortedIter<'a, B, Key, Value, R>
 where
-    R: Ranking<N, D, Key>,
+    R: Ranking<B, Key>,
 {
     type Item = (&'a Key, &'a Value);
 
@@ -416,31 +407,26 @@ where
     }
 }
 
-union SortedIterItemMut<'a, N, const D: usize, Key, Value> {
-    node: &'a mut Node<N, D, Key, Value>,
+union SortedIterItemMut<'a, B, Key, Value> {
+    node: &'a mut Node<B, Key, Value>,
     entry: &'a mut (Key, Value),
 }
 
-pub struct SortedIterMut<'a, N, const D: usize, Key, Value, R>
+pub struct SortedIterMut<'a, B, Key, Value, R>
 where
-    R: Ranking<N, D, Key>,
+    R: Ranking<B, Key>,
 {
     ranking: R,
-    entries:
-        BinaryHeap<Ranked<Reverse<(R::Metric, usize)>, SortedIterItemMut<'a, N, D, Key, Value>>>,
+    entries: BinaryHeap<Ranked<Reverse<(R::Metric, usize)>, SortedIterItemMut<'a, B, Key, Value>>>,
 
-    _phantom: PhantomData<Bounds<N, D>>,
+    _phantom: PhantomData<B>,
 }
 
-impl<'a, N, const D: usize, Key, Value, R> SortedIterMut<'a, N, D, Key, Value, R>
+impl<'a, B, Key, Value, R> SortedIterMut<'a, B, Key, Value, R>
 where
-    R: Ranking<N, D, Key>,
+    R: Ranking<B, Key>,
 {
-    pub(crate) unsafe fn new(
-        height: usize,
-        root: &'a mut Node<N, D, Key, Value>,
-        ranking: R,
-    ) -> Self {
+    pub(crate) unsafe fn new(height: usize, root: &'a mut Node<B, Key, Value>, ranking: R) -> Self {
         let mut entries = BinaryHeap::new();
         entries.push(Ranked {
             score: Reverse((ranking.bounds_min(&root.bounds), height + 1)),
@@ -455,9 +441,9 @@ where
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, R> Iterator for SortedIterMut<'a, N, D, Key, Value, R>
+impl<'a, B, Key, Value, R> Iterator for SortedIterMut<'a, B, Key, Value, R>
 where
-    R: Ranking<N, D, Key>,
+    R: Ranking<B, Key>,
 {
     type Item = (&'a Key, &'a mut Value);
 
@@ -493,23 +479,23 @@ where
     }
 }
 
-pub struct FilterSortedIter<'a, N, const D: usize, Key, Value, R, S>
+pub struct FilterSortedIter<'a, B, Key, Value, R, S>
 where
-    R: Ranking<N, D, Key, Metric = Option<S>>,
+    R: Ranking<B, Key, Metric = Option<S>>,
     S: Ord,
 {
     ranking: R,
-    entries: BinaryHeap<Ranked<Reverse<(S, usize)>, SortedIterItem<'a, N, D, Key, Value>>>,
+    entries: BinaryHeap<Ranked<Reverse<(S, usize)>, SortedIterItem<'a, B, Key, Value>>>,
 
-    _phantom: PhantomData<Bounds<N, D>>,
+    _phantom: PhantomData<B>,
 }
 
-impl<'a, N, const D: usize, Key, Value, R, S> FilterSortedIter<'a, N, D, Key, Value, R, S>
+impl<'a, B, Key, Value, R, S> FilterSortedIter<'a, B, Key, Value, R, S>
 where
-    R: Ranking<N, D, Key, Metric = Option<S>>,
+    R: Ranking<B, Key, Metric = Option<S>>,
     S: Ord,
 {
-    pub(crate) unsafe fn new(height: usize, root: &'a Node<N, D, Key, Value>, ranking: R) -> Self {
+    pub(crate) unsafe fn new(height: usize, root: &'a Node<B, Key, Value>, ranking: R) -> Self {
         let mut entries = BinaryHeap::new();
         if let Some(score) = ranking.bounds_min(&root.bounds) {
             entries.push(Ranked {
@@ -526,10 +512,9 @@ where
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, R, S> Iterator
-    for FilterSortedIter<'a, N, D, Key, Value, R, S>
+impl<'a, B, Key, Value, R, S> Iterator for FilterSortedIter<'a, B, Key, Value, R, S>
 where
-    R: Ranking<N, D, Key, Metric = Option<S>>,
+    R: Ranking<B, Key, Metric = Option<S>>,
     S: Ord,
 {
     type Item = (&'a Key, &'a Value);
@@ -570,27 +555,23 @@ where
     }
 }
 
-pub struct FilterSortedIterMut<'a, N, const D: usize, Key, Value, R, S>
+pub struct FilterSortedIterMut<'a, B, Key, Value, R, S>
 where
-    R: Ranking<N, D, Key, Metric = Option<S>>,
+    R: Ranking<B, Key, Metric = Option<S>>,
     S: Ord,
 {
     ranking: R,
-    entries: BinaryHeap<Ranked<Reverse<(S, usize)>, SortedIterItemMut<'a, N, D, Key, Value>>>,
+    entries: BinaryHeap<Ranked<Reverse<(S, usize)>, SortedIterItemMut<'a, B, Key, Value>>>,
 
-    _phantom: PhantomData<Bounds<N, D>>,
+    _phantom: PhantomData<B>,
 }
 
-impl<'a, N, const D: usize, Key, Value, R, S> FilterSortedIterMut<'a, N, D, Key, Value, R, S>
+impl<'a, B, Key, Value, R, S> FilterSortedIterMut<'a, B, Key, Value, R, S>
 where
-    R: Ranking<N, D, Key, Metric = Option<S>>,
+    R: Ranking<B, Key, Metric = Option<S>>,
     S: Ord,
 {
-    pub(crate) unsafe fn new(
-        height: usize,
-        root: &'a mut Node<N, D, Key, Value>,
-        ranking: R,
-    ) -> Self {
+    pub(crate) unsafe fn new(height: usize, root: &'a mut Node<B, Key, Value>, ranking: R) -> Self {
         let mut entries = BinaryHeap::new();
         if let Some(score) = ranking.bounds_min(&root.bounds) {
             entries.push(Ranked {
@@ -607,10 +588,9 @@ where
     }
 }
 
-impl<'a, N, const D: usize, Key, Value, R, S> Iterator
-    for FilterSortedIterMut<'a, N, D, Key, Value, R, S>
+impl<'a, B, Key, Value, R, S> Iterator for FilterSortedIterMut<'a, B, Key, Value, R, S>
 where
-    R: Ranking<N, D, Key, Metric = Option<S>>,
+    R: Ranking<B, Key, Metric = Option<S>>,
     S: Ord,
 {
     type Item = (&'a Key, &'a mut Value);

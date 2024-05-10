@@ -3,7 +3,7 @@ use std::{cmp, ops::Sub};
 use array_init::from_iter;
 
 use crate::{
-    bounds::{Bounded, Bounds},
+    bounds::{Bounded, AABB},
     intersects::{line_bounds_intersect, Intersects},
     vector::Vector,
 };
@@ -11,11 +11,11 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line<N, const D: usize>(pub Vector<N, D>, pub Vector<N, D>);
 
-impl<N, const D: usize> Bounded<N, D> for Line<N, D>
+impl<N, const D: usize> Bounded<AABB<N, D>> for Line<N, D>
 where
-    N: Ord + Clone,
+    N: Ord + Clone + num_traits::Bounded,
 {
-    fn bounds(&self) -> Bounds<N, D> {
+    fn bounds(&self) -> AABB<N, D> {
         let min = Vector(
             from_iter(
                 self.0
@@ -32,7 +32,7 @@ where
             )
             .unwrap(),
         );
-        Bounds { min, max }
+        AABB { min, max }
     }
 }
 
@@ -53,11 +53,11 @@ where
     }
 }
 
-impl<N, const D: usize> Intersects<Bounds<N, D>> for Line<N, D>
+impl<N, const D: usize> Intersects<AABB<N, D>> for Line<N, D>
 where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
 {
-    fn intersects(&self, rhs: &Bounds<N, D>) -> bool {
+    fn intersects(&self, rhs: &AABB<N, D>) -> bool {
         line_bounds_intersect(rhs, &self.0, &self.delta())
     }
 }

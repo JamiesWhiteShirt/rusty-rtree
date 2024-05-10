@@ -11,11 +11,11 @@ use crate::{
     util::empty_slice,
 };
 
-type MaybeUninitTreeIter<'a, N, const D: usize, Key, Value> =
-    MaybeUninitIterStack<slice::Iter<'a, (Key, Value)>, slice::Iter<'a, Node<N, D, Key, Value>>>;
+type MaybeUninitTreeIter<'a, B, Key, Value> =
+    MaybeUninitIterStack<slice::Iter<'a, (Key, Value)>, slice::Iter<'a, Node<B, Key, Value>>>;
 
-type RewindableTreeIter<'a, N, const D: usize, Key, Value> =
-    IterStack<RewindableIter<'a, (Key, Value)>, RewindableIter<'a, Node<N, D, Key, Value>>>;
+type RewindableTreeIter<'a, B, Key, Value> =
+    IterStack<RewindableIter<'a, (Key, Value)>, RewindableIter<'a, Node<B, Key, Value>>>;
 
 pub(crate) struct RewindableIter<'a, T> {
     slice: &'a [T],
@@ -50,34 +50,21 @@ impl<'a, T> Iterator for RewindableIter<'a, T> {
     }
 }
 
-pub struct LeftJoinIter<
-    'l,
-    'r,
-    NL,
-    NR,
-    const DL: usize,
-    const DR: usize,
-    KeyL,
-    KeyR,
-    ValueL,
-    ValueR,
-    QL,
-    QR,
-    Filter,
-> where
+pub struct LeftJoinIter<'l, 'r, BL, BR, KeyL, KeyR, ValueL, ValueR, QL, QR, Filter>
+where
     QL: ?Sized,
     QR: ?Sized,
 {
-    left: Box<TreeIter<'l, NL, DL, KeyL, ValueL>>,
-    right: Box<RewindableTreeIter<'r, NR, DR, KeyR, ValueR>>,
-    right_alloc: RcMutAlloc<TreeIter<'r, NR, DR, KeyR, ValueR>>,
+    left: Box<TreeIter<'l, BL, KeyL, ValueL>>,
+    right: Box<RewindableTreeIter<'r, BR, KeyR, ValueR>>,
+    right_alloc: RcMutAlloc<TreeIter<'r, BR, KeyR, ValueR>>,
     filter: Filter,
     _phantom: PhantomData<(&'l QL, &'r QR)>,
 }
 
-unsafe fn iterate_left_children<'a, N, const D: usize, Key, Value>(
-    stack: &mut TreeIter<'a, N, D, Key, Value>,
-    node: &'a Node<N, D, Key, Value>,
+unsafe fn iterate_left_children<'a, B, Key, Value>(
+    stack: &mut TreeIter<'a, B, Key, Value>,
+    node: &'a Node<B, Key, Value>,
     level: usize,
 ) {
     if let Some(level) = NonZeroUsize::new(level) {
@@ -87,9 +74,9 @@ unsafe fn iterate_left_children<'a, N, const D: usize, Key, Value>(
     }
 }
 
-unsafe fn iterate_right_children<'a, N, const D: usize, Key, Value>(
-    stack: &mut RewindableTreeIter<'a, N, D, Key, Value>,
-    node: Option<&'a Node<N, D, Key, Value>>,
+unsafe fn iterate_right_children<'a, B, Key, Value>(
+    stack: &mut RewindableTreeIter<'a, B, Key, Value>,
+    node: Option<&'a Node<B, Key, Value>>,
     level: usize,
 ) {
     if let Some(level) = NonZeroUsize::new(level) {
@@ -112,30 +99,17 @@ fn rewind<'a, Leaf, T>(iter: &mut InnerIterStack<Leaf, RewindableIter<'a, T>>) {
     }
 }
 
-impl<
-        'l,
-        'r,
-        NL,
-        NR,
-        const DL: usize,
-        const DR: usize,
-        ValueL,
-        ValueR,
-        KeyL,
-        KeyR,
-        QL,
-        QR,
-        Filter,
-    > LeftJoinIter<'l, 'r, NL, NR, DL, DR, KeyL, KeyR, ValueL, ValueR, QL, QR, Filter>
+impl<'l, 'r, BL, BR, ValueL, ValueR, KeyL, KeyR, QL, QR, Filter>
+    LeftJoinIter<'l, 'r, BL, BR, KeyL, KeyR, ValueL, ValueR, QL, QR, Filter>
 where
     QL: ?Sized,
     QR: ?Sized,
 {
     pub(crate) unsafe fn new(
         filter: Filter,
-        root_left: &'l Node<NL, DL, KeyL, ValueL>,
+        root_left: &'l Node<BL, KeyL, ValueL>,
         height_left: usize,
-        root_right: &'r Node<NR, DR, KeyR, ValueR>,
+        root_right: &'r Node<BR, KeyR, ValueR>,
         height_right: usize,
     ) -> Self {
         let mut left = IterStack::new_box(
@@ -164,34 +138,21 @@ where
     }
 }
 
-impl<
-        'l,
-        'r,
-        NL,
-        NR,
-        const DL: usize,
-        const DR: usize,
-        KeyL,
-        KeyR,
-        ValueL,
-        ValueR,
-        QL,
-        QR,
-        Filter,
-    > Iterator for LeftJoinIter<'l, 'r, NL, NR, DL, DR, KeyL, KeyR, ValueL, ValueR, QL, QR, Filter>
+impl<'l, 'r, BL, BR, KeyL, KeyR, ValueL, ValueR, QL, QR, Filter> Iterator
+    for LeftJoinIter<'l, 'r, BL, BR, KeyL, KeyR, ValueL, ValueR, QL, QR, Filter>
 where
     KeyL: Borrow<QL>,
     KeyR: Borrow<QR>,
-    QL: ?Sized + Bounded<NL, DL>,
+    QL: ?Sized + Bounded<BL>,
     QR: ?Sized,
-    Filter: JoinFilter<NL, NR, DL, DR, QL, QR> + Clone,
+    Filter: JoinFilter<BL, BR, QL, QR> + Clone,
 {
     type Item = (
         (&'l KeyL, &'l ValueL),
         FilterIter<
-            rc_mut::RcMut<TreeIter<'r, NR, DR, KeyR, ValueR>>,
+            rc_mut::RcMut<TreeIter<'r, BR, KeyR, ValueR>>,
             QR,
-            JoiningFilter<'l, NL, DL, QL, Filter>,
+            JoiningFilter<'l, BL, QL, Filter>,
         >,
     );
 
@@ -201,10 +162,10 @@ where
             return None;
         }
 
-        enum Op<'l, 'r, NL, NR, const DL: usize, const DR: usize, KeyL, KeyR, ValueL, ValueR> {
+        enum Op<'l, 'r, BL, BR, KeyL, KeyR, ValueL, ValueR> {
             Descend {
-                left: &'l Node<NL, DL, KeyL, ValueL>,
-                right: Option<&'r Node<NR, DR, KeyR, ValueR>>,
+                left: &'l Node<BL, KeyL, ValueL>,
+                right: Option<&'r Node<BR, KeyR, ValueR>>,
             },
             Ascend,
         }
@@ -249,7 +210,7 @@ where
                             self.right.map_into(
                                 |leaf| leaf.remainder_iter(),
                                 |inner, _| inner.remainder_iter(),
-                                (stack_ptr as *mut MaybeUninitTreeIter<'r, NR, DR, KeyR, ValueR>)
+                                (stack_ptr as *mut MaybeUninitTreeIter<'r, BR, KeyR, ValueR>)
                                     .as_mut()
                                     .unwrap_unchecked(),
                             );

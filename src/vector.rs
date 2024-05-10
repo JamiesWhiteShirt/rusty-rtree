@@ -6,7 +6,7 @@ use std::{
 use array_init::array_init;
 
 use crate::{
-    bounds::{Bounded, Bounds},
+    bounds::{Bounded, AABB},
     contains::Contains,
     geom::sphere::Sphere,
     intersects::Intersects,
@@ -95,8 +95,8 @@ where
     }
 }
 
-impl<S: Ord, const D: usize> Intersects<Bounds<S, D>> for Vector<S, D> {
-    fn intersects(&self, rhs: &Bounds<S, D>) -> bool {
+impl<S: Ord, const D: usize> Intersects<AABB<S, D>> for Vector<S, D> {
+    fn intersects(&self, rhs: &AABB<S, D>) -> bool {
         rhs.contains(self)
     }
 }
@@ -109,9 +109,9 @@ impl<S: Clone + Sub<Output = S> + Into<f64>, const D: usize> Intersects<Sphere<S
     }
 }
 
-impl<S: Ord + Clone, const D: usize> Bounded<S, D> for Vector<S, D> {
-    fn bounds(&self) -> Bounds<S, D> {
-        Bounds {
+impl<S: Ord + Clone + num_traits::Bounded, const D: usize> Bounded<AABB<S, D>> for Vector<S, D> {
+    fn bounds(&self) -> AABB<S, D> {
+        AABB {
             min: self.clone(),
             max: self.clone(),
         }

@@ -4,7 +4,7 @@ use noisy_float::types::N64;
 use num_traits::Float;
 
 use crate::{
-    bounds::{Bounded, Bounds},
+    bounds::{Bounded, Bounds, AABB},
     fc_vec::{FCVecContainer, FCVecRefMut},
 };
 
@@ -14,8 +14,8 @@ fn worst_combination<N, const D: usize, Value>(
     overflow_value: &Value,
 ) -> (usize, usize)
 where
-    N: Ord + Clone + Sub<Output = N> + Into<f64>,
-    Value: Bounded<N, D>,
+    N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+    Value: Bounded<AABB<N, D>>,
 {
     if values.len() < 1 {
         panic!("Must have more than 2 values!");
@@ -57,8 +57,8 @@ fn seed_split_groups<N, const D: usize, Value>(
     mut overflow_value: Value,
 ) -> Value
 where
-    N: Ord + Clone + Sub<Output = N> + Into<f64>,
-    Value: Bounded<N, D>,
+    N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+    Value: Bounded<AABB<N, D>>,
 {
     let (i_1, i_2) = worst_combination(values, &overflow_value);
     values.swap(0, i_1);
@@ -70,11 +70,11 @@ where
 
 fn best_candidate_for_group<N, const D: usize, Value>(
     children: &[Value],
-    bounds: &Bounds<N, D>,
+    bounds: &AABB<N, D>,
 ) -> Option<(usize, N64)>
 where
-    N: Ord + Clone + Sub<Output = N> + Into<f64>,
-    Value: Bounded<N, D>,
+    N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+    Value: Bounded<AABB<N, D>>,
 {
     children
         .into_iter()
@@ -90,10 +90,10 @@ pub(crate) fn quadratic<'a, N, const D: usize, Value>(
     min_children: usize,
     mut values: FCVecRefMut<'a, Value>,
     overflow_value: Value,
-) -> (Bounds<N, D>, Bounds<N, D>, FCVecContainer<Value>)
+) -> (AABB<N, D>, AABB<N, D>, FCVecContainer<Value>)
 where
-    N: Ord + Clone + Sub<Output = N> + Into<f64>,
-    Value: Bounded<N, D>,
+    N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+    Value: Bounded<AABB<N, D>>,
 {
     if values.len() < 1 {
         panic!("Must have more than 2 children to split!");
