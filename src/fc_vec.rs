@@ -1,3 +1,4 @@
+use core::slice;
 use std::{
     alloc,
     fmt::{self, Debug},
@@ -151,19 +152,6 @@ impl Alloc {
         }
     }
 
-    /// Returns a [safe reference](FCVecRef<T>) for the given FCVec.
-    ///
-    /// # Safety
-    ///
-    /// The given FCVec must have been created by this Alloc and must not
-    /// have been dropped.
-    pub(crate) unsafe fn wrap_ref<'a, T>(&self, vec: &'a FCVec<T>) -> FCVecRef<'a, T> {
-        FCVecRef {
-            ops: *self,
-            data: vec,
-        }
-    }
-
     /// Returns a [safe mutable reference](FCVecRefMut<T>) for the given FCVec.
     ///
     /// # Safety
@@ -176,68 +164,20 @@ impl Alloc {
             data: vec,
         }
     }
-}
-
-pub(crate) struct FCVecRef<'a, T> {
-    ops: Alloc,
-    data: &'a FCVec<T>,
-}
-
-impl<'a, T> FCVecRef<'a, T> {
-    pub(crate) fn len(&self) -> usize {
-        self.data.len()
-    }
 
     /// Returns a copy of the referenced FCVec in a new FCVecContainer.
-    pub(crate) fn clone(&self) -> FCVecContainer<T>
+    pub(crate) unsafe fn clone<T>(&self, vec: &[T]) -> FCVecContainer<T>
     where
         T: Clone,
     {
-        let mut new = self.ops.new();
-        for value in self.data {
+        if vec.len() > self.cap {
+            panic!("Vector is too large");
+        }
+        let mut new = self.new();
+        for value in vec {
             new.push(value.clone());
         }
         new
-    }
-}
-
-impl<'a, T> Debug for FCVecRef<'a, T>
-where
-    T: Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FCVecRef")
-            .field("cap", &self.ops.cap)
-            .field("data", self.data)
-            .finish()
-    }
-}
-
-impl<'a, T> Deref for FCVecRef<'a, T> {
-    type Target = [T];
-
-    fn deref(&self) -> &Self::Target {
-        self.data.deref()
-    }
-}
-
-impl<'a, T, I> Index<I> for FCVecRef<'a, T>
-where
-    I: SliceIndex<[T]>,
-{
-    type Output = I::Output;
-
-    fn index(&self, index: I) -> &Self::Output {
-        self.data.index(index)
-    }
-}
-
-impl<'a, T> IntoIterator for FCVecRef<'a, T> {
-    type Item = &'a T;
-    type IntoIter = Iter<'a, T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.data.into_iter()
     }
 }
 
@@ -539,8 +479,8 @@ impl<T> FCVecContainer<T> {
         self.data.len()
     }
 
-    pub(crate) fn borrow(&self) -> FCVecRef<T> {
-        unsafe { self.ops.wrap_ref(&self.data) }
+    pub(crate) fn borrow(&self) -> &[T] {
+        unsafe { slice::from_raw_parts(self.data.as_ptr(), self.len()) }
     }
 
     pub(crate) fn borrow_mut(&mut self) -> FCVecRefMut<T> {

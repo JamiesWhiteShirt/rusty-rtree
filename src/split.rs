@@ -83,53 +83,70 @@ where
         .min_by_key(|(_, volume)| *volume)
 }
 
-/// Splits values into two groups. When it returns, values contains the values of
-/// the first group while the other group is returned along with its minimum
-/// bounds.
-pub(crate) fn quadratic<'a, N, const D: usize, Value>(
-    min_children: usize,
-    mut values: FCVecRefMut<'a, Value>,
-    overflow_value: Value,
-) -> (AABB<N, D>, AABB<N, D>, FCVecContainer<Value>)
+pub trait Splitter<B> {
+    /// Splits values into two groups. When it returns, values contains the values of the first
+    /// group while the other group is returned along with its minimum bounds.
+    fn split<'a, Value>(
+        &mut self,
+        min_children: usize,
+        values: FCVecRefMut<'a, Value>,
+        overflow_value: Value,
+    ) -> (B, B, FCVecContainer<Value>)
+    where
+        Value: Bounded<B>;
+}
+
+pub struct QuadraticSplitter;
+
+impl<N, const D: usize> Splitter<AABB<N, D>> for QuadraticSplitter
 where
     N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-    Value: Bounded<AABB<N, D>>,
 {
-    if values.len() < 1 {
-        panic!("Must have more than 2 children to split!");
-    }
-
-    let mut group_2 = values.ops().new();
-    group_2.push(seed_split_groups(&mut *values, overflow_value));
-    let (mut bounds_1, mut bounds_2) = (values[0].bounds(), group_2[0].bounds());
-
-    let mut group_1_len = 1;
-    // children is now partitioned such that children[0..group_1_len] is group_1
-    // and children[group_1_len..] is the remaining children to be distributed
-    // into groups.
-    // When the loop terminates, children is group_1.
-    while group_1_len < values.len() {
-        let remaining = &values[group_1_len..];
-        let (candidate_1, candidate_2) = (
-            best_candidate_for_group(remaining, &bounds_1).unwrap(),
-            best_candidate_for_group(remaining, &bounds_2).unwrap(),
-        );
-
-        let add_to_group_1 = if candidate_1.1 < candidate_2.1 {
-            group_2.len() + remaining.len() - 1 >= min_children
-        } else {
-            group_1_len + remaining.len() - 1 == min_children
-        };
-
-        if add_to_group_1 {
-            bounds_1 = Bounds::union(&bounds_1, &remaining[candidate_1.0].bounds());
-            values.swap(group_1_len + candidate_1.0, group_1_len);
-            group_1_len += 1;
-        } else {
-            bounds_2 = Bounds::union(&bounds_2, &remaining[candidate_2.0].bounds());
-            group_2.push(values.swap_remove(group_1_len + candidate_2.0))
+    fn split<'a, Value>(
+        &mut self,
+        min_children: usize,
+        mut values: FCVecRefMut<'a, Value>,
+        overflow_value: Value,
+    ) -> (AABB<N, D>, AABB<N, D>, FCVecContainer<Value>)
+    where
+        Value: Bounded<AABB<N, D>>,
+    {
+        if values.len() < 1 {
+            panic!("Must have more than 2 children to split!");
         }
-    }
 
-    (bounds_1, bounds_2, group_2)
+        let mut group_2 = values.ops().new();
+        group_2.push(seed_split_groups(&mut *values, overflow_value));
+        let (mut bounds_1, mut bounds_2) = (values[0].bounds(), group_2[0].bounds());
+
+        let mut group_1_len = 1;
+        // children is now partitioned such that children[0..group_1_len] is group_1
+        // and children[group_1_len..] is the remaining children to be distributed
+        // into groups.
+        // When the loop terminates, children is group_1.
+        while group_1_len < values.len() {
+            let remaining = &values[group_1_len..];
+            let (candidate_1, candidate_2) = (
+                best_candidate_for_group(remaining, &bounds_1).unwrap(),
+                best_candidate_for_group(remaining, &bounds_2).unwrap(),
+            );
+
+            let add_to_group_1 = if candidate_1.1 < candidate_2.1 {
+                group_2.len() + remaining.len() - 1 >= min_children
+            } else {
+                group_1_len + remaining.len() - 1 == min_children
+            };
+
+            if add_to_group_1 {
+                bounds_1 = Bounds::union(&bounds_1, &remaining[candidate_1.0].bounds());
+                values.swap(group_1_len + candidate_1.0, group_1_len);
+                group_1_len += 1;
+            } else {
+                bounds_2 = Bounds::union(&bounds_2, &remaining[candidate_2.0].bounds());
+                group_2.push(values.swap_remove(group_1_len + candidate_2.0))
+            }
+        }
+
+        (bounds_1, bounds_2, group_2)
+    }
 }

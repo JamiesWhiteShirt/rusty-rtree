@@ -3,16 +3,16 @@ use std::{
     fmt::Debug,
     mem::{self, ManuallyDrop},
     num::NonZeroUsize,
-    ops::Sub,
     ptr, slice,
 };
 
 use crate::{
-    bounds::{Bounded, Bounds, AABB},
+    bounds::{Bounded, Bounds},
     contains::Contains,
-    fc_vec::{self, FCVec, FCVecContainer, FCVecRef, FCVecRefMut},
+    fc_vec::{self, FCVec, FCVecContainer, FCVecRefMut},
     intersects::Intersects,
-    select, split,
+    select::Selector,
+    split::Splitter,
     util::{get_only, GetOnlyResult},
 };
 
@@ -236,32 +236,6 @@ impl Alloc {
         }
     }
 
-    /// Borrows a node with a provided level in a safe reference. The provided
-    /// node must have been allocated by the same Alloc and must not have been
-    /// dropped.
-    ///
-    /// # Safety
-    ///
-    /// The provided `level` must match the implicit level of the node. It is
-    /// undefined behavior to use the returned reference if this condition is
-    /// violated.
-    ///
-    /// The return value must not be used if this is called with a node that has
-    /// been allocated by a different Alloc. It is undefined behavior to do so
-    /// if the Allocs have different `max_children` values, and it is a logic
-    /// error to do so if the Alloc have different `min_children` values.
-    pub(crate) unsafe fn wrap_ref<'a, B, Key, Value>(
-        &self,
-        node: &'a Node<B, Key, Value>,
-        level: usize,
-    ) -> NodeRef<'a, B, Key, Value> {
-        NodeRef {
-            alloc: *self,
-            level,
-            node,
-        }
-    }
-
     /// Mutably borrows a node with a provided level in a safe reference. The
     /// provided `node` must have been allocated by the same Alloc and must not
     /// have been dropped.
@@ -353,6 +327,53 @@ impl Alloc {
             NodeChildrenContainer::Leaf(self.children.wrap(ManuallyDrop::into_inner(children.leaf)))
         }
     }
+
+    pub(crate) unsafe fn clone_node<B, Key, Value>(
+        &self,
+        node: NodeRef<B, Key, Value>,
+    ) -> NodeContainer<B, Key, Value>
+    where
+        B: Clone,
+        Key: Clone,
+        Value: Clone,
+    {
+        let bounds = node.node.bounds.clone();
+        // let children = self.wrap_children(node.node.children, node.level);
+        let children = self.clone_children(node.children());
+        // SAFETY: `children` contains the same children as `self`, so the
+        // level of the children is the same as the level of `self`. The clones
+        // are allocated by the same fc_vec::Alloc as `self`.
+        unsafe { self.wrap(Node::new(bounds, children.leak(), node.level), node.level) }
+    }
+
+    unsafe fn clone_children<B, Key, Value>(
+        &self,
+        children: NodeChildrenRef<B, Key, Value>,
+    ) -> NodeChildrenContainer<B, Key, Value>
+    where
+        B: Clone,
+        Key: Clone,
+        Value: Clone,
+    {
+        match children {
+            NodeChildrenRef::Inner(children) => {
+                let level = children.level;
+                let mut clone_children = self.children.new::<Node<B, Key, Value>>();
+                for child in children {
+                    clone_children.push(self.clone_node(child).leak());
+                }
+                NodeChildrenContainer::Inner(InnerNodeChildrenContainer {
+                    alloc: *self,
+                    level,
+                    children: clone_children.leak(),
+                })
+            }
+            NodeChildrenRef::Leaf(children) => {
+                let children = self.children.clone(children);
+                NodeChildrenContainer::Leaf(children)
+            }
+        }
+    }
 }
 
 pub(crate) struct NodeRefMut<'a, B, Key, Value> {
@@ -361,15 +382,16 @@ pub(crate) struct NodeRefMut<'a, B, Key, Value> {
     node: &'a mut Node<B, Key, Value>,
 }
 
-impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
+impl<'a, B, Key, Value> NodeRefMut<'a, B, Key, Value>
+where
+    B: Bounds + Clone,
+    Key: Bounded<B>,
+{
     fn self_insert(
         &mut self,
-        entry: NodeEntry<AABB<N, D>, Key, Value>,
-    ) -> Option<NodeContainer<AABB<N, D>, Key, Value>>
-    where
-        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-        Key: Bounded<AABB<N, D>>,
-    {
+        splitter: &mut impl Splitter<B>,
+        entry: NodeEntry<B, Key, Value>,
+    ) -> Option<NodeContainer<B, Key, Value>> {
         let entry_bounds = entry.bounds();
         let min_children = self.alloc.min_children;
         match (self.children_mut(), entry) {
@@ -381,7 +403,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
                     );
                 }
                 if let Some(overflow_node) = children.try_push(entry) {
-                    let (new_bounds, sibling) = children.split(overflow_node);
+                    let (new_bounds, sibling) = children.split(splitter, overflow_node);
                     self.node.bounds = new_bounds;
                     Some(sibling)
                 } else {
@@ -392,7 +414,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
             (NodeChildrenRefMut::Leaf(mut children), NodeEntry::Leaf(entry)) => {
                 if let Some(overflow_entry) = children.try_push(entry) {
                     let (new_bounds, sibling_bounds, sibling_children) =
-                        split::quadratic(min_children, children, overflow_entry);
+                        splitter.split(min_children, children, overflow_entry);
                     self.node.bounds = new_bounds;
                     // SAFETY: `sibling_children` is allocated by the same
                     // fc_vec::Alloc as `children`. The level of the sibling node is
@@ -412,7 +434,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
                         )
                     })
                 } else {
-                    self.node.bounds = AABB::union(&self.node.bounds, &entry_bounds);
+                    self.node.bounds = B::union(&self.node.bounds, &entry_bounds);
                     None
                 }
             }
@@ -427,12 +449,10 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
 
     fn insert(
         &mut self,
-        entry: NodeEntry<AABB<N, D>, Key, Value>,
-    ) -> Option<NodeContainer<AABB<N, D>, Key, Value>>
-    where
-        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-        Key: Bounded<AABB<N, D>>,
-    {
+        selector: &mut impl Selector<B>,
+        splitter: &mut impl Splitter<B>,
+        entry: NodeEntry<B, Key, Value>,
+    ) -> Option<NodeContainer<B, Key, Value>> {
         let entry_bounds = entry.bounds();
         if entry.target_level() != self.level {
             let mut children = match self.children_mut() {
@@ -441,30 +461,30 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
                     unreachable!()
                 }
             };
-            let mut insert_child =
-                select::minimal_volume_increase(children.iter_mut(), &entry_bounds).unwrap();
-            if let Some(new_child) = insert_child.insert(entry) {
+            let mut insert_child = selector.select(children.iter_mut(), &entry_bounds).unwrap();
+            if let Some(new_child) = insert_child.insert(selector, splitter, entry) {
                 // The child node split, so the entries in new_child are no longer part of self
                 // Recompute the bounds of self before trying to insert new_child into self
-                self.node.bounds = AABB::union_all(children.iter().map(|child| child.bounds()));
-                self.self_insert(NodeEntry::Inner(new_child))
+                self.node.bounds = B::union_all(children.iter().map(|child| child.bounds()));
+                self.self_insert(splitter, NodeEntry::Inner(new_child))
             } else {
-                self.node.bounds = AABB::union(&self.node.bounds, &entry_bounds);
+                self.node.bounds = B::union(&self.node.bounds, &entry_bounds);
                 None
             }
         } else {
-            self.self_insert(entry)
+            self.self_insert(splitter, entry)
         }
     }
 
     fn insert_unique(
         &mut self,
+        selector: &mut impl Selector<B>,
+        splitter: &mut impl Splitter<B>,
         key: Key,
         value: Value,
-    ) -> (Option<Value>, Option<NodeContainer<AABB<N, D>, Key, Value>>)
+    ) -> (Option<Value>, Option<NodeContainer<B, Key, Value>>)
     where
-        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-        Key: Eq + Bounded<AABB<N, D>>,
+        Key: Eq,
     {
         let entry_bounds = key.bounds();
         match self.children_mut() {
@@ -477,24 +497,28 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
                     GetOnlyResult::None => {
                         // If there are no children containing the key bounds, then
                         // the key cannot exist in the node and it can be inserted.
-                        (None, self.insert(NodeEntry::Leaf((key, value))))
+                        (
+                            None,
+                            self.insert(selector, splitter, NodeEntry::Leaf((key, value))),
+                        )
                     }
                     GetOnlyResult::Only(mut child) => {
                         // If there is only one child containing the key bounds,
                         // then we can maintain the uniqueness invariant by
                         // performing a unique insert into that child, which may
                         // cause the child to split.
-                        let (old_value, new_child) = child.insert_unique(key, value);
+                        let (old_value, new_child) =
+                            child.insert_unique(selector, splitter, key, value);
                         (
                             old_value,
                             if let Some(new_child) = new_child {
                                 // The child node split, so the entries in new_child are no longer part of self
                                 // Recompute the bounds of self before trying to insert new_child into self
                                 self.node.bounds =
-                                    AABB::union_all(children.iter().map(|child| child.bounds()));
-                                self.self_insert(NodeEntry::Inner(new_child))
+                                    B::union_all(children.iter().map(|child| child.bounds()));
+                                self.self_insert(splitter, NodeEntry::Inner(new_child))
                             } else {
-                                self.node.bounds = AABB::union(&self.node.bounds, &entry_bounds);
+                                self.node.bounds = B::union(&self.node.bounds, &entry_bounds);
                                 None
                             },
                         )
@@ -505,7 +529,10 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
                         if let Some(value_ref) = self.get_mut(&key) {
                             (Some(std::mem::replace(value_ref, value)), None)
                         } else {
-                            (None, self.insert(NodeEntry::Leaf((key, value))))
+                            (
+                                None,
+                                self.insert(selector, splitter, NodeEntry::Leaf((key, value))),
+                            )
                         }
                     }
                 }
@@ -516,7 +543,10 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
                 if let Some(entry) = children.iter_mut().find(|(k, _)| k == &key) {
                     (Some(std::mem::replace(&mut entry.1, value)), None)
                 } else {
-                    (None, self.insert(NodeEntry::Leaf((key, value))))
+                    (
+                        None,
+                        self.insert(selector, splitter, NodeEntry::Leaf((key, value))),
+                    )
                 }
             }
         }
@@ -525,12 +555,12 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
     fn remove<Q>(
         &mut self,
         key: &Q,
-        on_underfull: &mut impl FnMut(NodeChildrenContainer<AABB<N, D>, Key, Value>),
+        on_underfull: &mut impl FnMut(NodeChildrenContainer<B, Key, Value>),
     ) -> Option<Value>
     where
-        N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-        Key: Bounded<AABB<N, D>> + Eq + Borrow<Q>,
-        Q: Bounded<AABB<N, D>> + Eq + ?Sized,
+        B: Intersects<B>,
+        Key: Eq + Borrow<Q>,
+        Q: Bounded<B> + Eq + ?Sized,
     {
         let min_children = self.alloc.min_children;
         match self.children_mut() {
@@ -548,7 +578,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
                             }
 
                             self.node.bounds =
-                                AABB::union_all(children.iter().map(|child| child.bounds()));
+                                B::union_all(children.iter().map(|child| child.bounds()));
 
                             return Some(value);
                         }
@@ -560,8 +590,7 @@ impl<'a, N, const D: usize, Key, Value> NodeRefMut<'a, AABB<N, D>, Key, Value> {
                 let index = children.iter().position(|(k, _)| k.borrow() == key);
                 if let Some(i) = index {
                     let value = children.swap_remove(i).1;
-                    self.node.bounds =
-                        AABB::union_all(children.iter().map(|(key, _)| key.bounds()));
+                    self.node.bounds = B::union_all(children.iter().map(|(key, _)| key.bounds()));
 
                     return Some(value);
                 }
@@ -721,44 +750,63 @@ pub(crate) struct RootNodeRefMut<'a, B, Key, Value> {
     node: &'a mut Node<B, Key, Value>,
 }
 
-impl<'a, N, const D: usize, Key, Value> RootNodeRefMut<'a, AABB<N, D>, Key, Value> {
-    fn insert_entry(&mut self, entry: NodeEntry<AABB<N, D>, Key, Value>)
-    where
-        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-        Key: Bounded<AABB<N, D>>,
-    {
-        if let Some(sibling) = self.node_ref_mut().insert(entry) {
+impl<'a, B, Key, Value> RootNodeRefMut<'a, B, Key, Value>
+where
+    B: Bounds + Clone,
+    Key: Bounded<B>,
+{
+    fn insert_entry(
+        &mut self,
+        selector: &mut impl Selector<B>,
+        splitter: &mut impl Splitter<B>,
+        entry: NodeEntry<B, Key, Value>,
+    ) {
+        if let Some(sibling) = self.node_ref_mut().insert(selector, splitter, entry) {
             self.branch(sibling);
         }
     }
 
-    pub(crate) fn insert(&mut self, key: Key, value: Value)
-    where
-        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-        Key: Bounded<AABB<N, D>>,
-    {
-        self.insert_entry(NodeEntry::Leaf((key, value)));
+    pub(crate) fn insert(
+        &mut self,
+        selector: &mut impl Selector<B>,
+        splitter: &mut impl Splitter<B>,
+        key: Key,
+        value: Value,
+    ) {
+        self.insert_entry(selector, splitter, NodeEntry::Leaf((key, value)));
     }
 
-    pub(crate) fn insert_unique(&mut self, key: Key, value: Value) -> Option<Value>
+    pub(crate) fn insert_unique(
+        &mut self,
+        selector: &mut impl Selector<B>,
+        splitter: &mut impl Splitter<B>,
+        key: Key,
+        value: Value,
+    ) -> Option<Value>
     where
-        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-        Key: Eq + Bounded<AABB<N, D>>,
+        Key: Eq,
     {
-        let (prev_value, sibling) = self.node_ref_mut().insert_unique(key, value);
+        let (prev_value, sibling) = self
+            .node_ref_mut()
+            .insert_unique(selector, splitter, key, value);
         if let Some(sibling) = sibling {
             self.branch(sibling);
         }
         prev_value
     }
 
-    pub(crate) fn remove<Q>(&'a mut self, key: &Q) -> Option<Value>
+    pub(crate) fn remove<Q>(
+        &'a mut self,
+        selector: &mut impl Selector<B>,
+        splitter: &mut impl Splitter<B>,
+        key: &Q,
+    ) -> Option<Value>
     where
-        N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-        Key: Bounded<AABB<N, D>> + Eq + Borrow<Q>,
-        Q: Bounded<AABB<N, D>> + Eq + ?Sized,
+        B: Intersects<B>,
+        Key: Eq + Borrow<Q>,
+        Q: Bounded<B> + Eq + ?Sized,
     {
-        let mut reinsert_entries: Box<[Option<NodeChildren<AABB<N, D>, Key, Value>>]> =
+        let mut reinsert_entries: Box<[Option<NodeChildren<B, Key, Value>>]> =
             std::iter::repeat_with(|| None).take(*self.height).collect();
         if let Some(value) = self.node_ref_mut().remove(key, &mut |children| {
             let level = children.level();
@@ -777,12 +825,12 @@ impl<'a, N, const D: usize, Key, Value> RootNodeRefMut<'a, AABB<N, D>, Key, Valu
                     match entries {
                         NodeChildrenContainer::Inner(children) => {
                             for entry in children {
-                                self.insert_entry(NodeEntry::Inner(entry));
+                                self.insert_entry(selector, splitter, NodeEntry::Inner(entry));
                             }
                         }
                         NodeChildrenContainer::Leaf(children) => {
                             for entry in children {
-                                self.insert_entry(NodeEntry::Leaf(entry));
+                                self.insert_entry(selector, splitter, NodeEntry::Leaf(entry));
                             }
                         }
                     }
@@ -880,7 +928,6 @@ pub(crate) struct NodeContainer<B, Key, Value> {
 impl<'a, B, Key, Value> NodeContainer<B, Key, Value> {
     fn borrow(&self) -> NodeRef<B, Key, Value> {
         NodeRef {
-            alloc: self.alloc,
             level: self.level,
             node: &self.node,
         }
@@ -951,7 +998,7 @@ where
     Value: Clone,
 {
     fn clone(&self) -> Self {
-        self.borrow().clone()
+        unsafe { self.alloc.clone_node(self.borrow()) }
     }
 }
 
@@ -970,16 +1017,23 @@ where
 }
 
 pub(crate) struct NodeRef<'a, S, Key, Value> {
-    alloc: Alloc,
     level: usize,
     node: &'a Node<S, Key, Value>,
 }
 
 impl<'a, B, Key, Value> NodeRef<'a, B, Key, Value> {
+    /// # Safety
+    ///
+    /// The provided `level` must match the implicit level of the node. It is
+    /// undefined behavior to use the returned reference if this condition is
+    /// violated.
+    pub(crate) unsafe fn new(node: &'a Node<B, Key, Value>, level: usize) -> Self {
+        NodeRef { level, node }
+    }
+
     pub(crate) fn children(&self) -> NodeChildrenRef<'a, B, Key, Value> {
         if let Some(level) = NonZeroUsize::new(self.level) {
             NodeChildrenRef::Inner(InnerNodeChildrenRef {
-                alloc: self.alloc,
                 level,
                 // SAFETY: The node is an inner node, so the children are
                 // initialized as inner children.
@@ -989,7 +1043,7 @@ impl<'a, B, Key, Value> NodeRef<'a, B, Key, Value> {
             // SAFETY: The node is a leaf node, so the children are initialized
             // as leaf children. `self.alloc.children` was used to create the
             // node's children.
-            NodeChildrenRef::Leaf(unsafe { self.alloc.children.wrap_ref(&self.node.children.leaf) })
+            NodeChildrenRef::Leaf(unsafe { &self.node.children.leaf })
         }
     }
 
@@ -1030,23 +1084,6 @@ impl<'a, B, Key, Value> NodeRef<'a, B, Key, Value> {
         }
     }
 
-    pub(crate) fn clone(&self) -> NodeContainer<B, Key, Value>
-    where
-        B: Clone,
-        Key: Clone,
-        Value: Clone,
-    {
-        let bounds = self.node.bounds.clone();
-        let children = self.children().clone();
-        // SAFETY: `children` contains the same children as `self`, so the
-        // level of the children is the same as the level of `self`. The clones
-        // are allocated by the same fc_vec::Alloc as `self`.
-        unsafe {
-            self.alloc
-                .wrap(Node::new(bounds, children.leak(), self.level), self.level)
-        }
-    }
-
     pub(crate) fn _debug_assert_bvh(&self) -> B
     where
         B: Bounds + Debug + Eq,
@@ -1075,14 +1112,14 @@ impl<'a, B, Key, Value> NodeRef<'a, B, Key, Value> {
         self.children()._debug_assert_eq(&other.children());
     }
 
-    pub(crate) fn _debug_assert_min_children(&self, is_root: bool) {
+    pub(crate) fn _debug_assert_min_children(&self, is_root: bool, min_children: usize) {
         let children = self.children();
         if !is_root {
-            assert!(children.len() >= self.alloc.min_children);
+            assert!(children.len() >= min_children);
         }
         if let NodeChildrenRef::Inner(children) = children {
             for child in children {
-                child._debug_assert_min_children(false);
+                child._debug_assert_min_children(false, min_children);
             }
         }
     }
@@ -1112,7 +1149,6 @@ where
 }
 
 pub(crate) struct InnerNodeChildrenRef<'a, B, Key, Value> {
-    alloc: Alloc,
     level: NonZeroUsize,
     children: &'a FCVec<Node<B, Key, Value>>,
 }
@@ -1122,7 +1158,6 @@ impl<'a, B, Key, Value> From<InnerNodeChildrenRefMut<'a, B, Key, Value>>
 {
     fn from(children: InnerNodeChildrenRefMut<'a, B, Key, Value>) -> Self {
         InnerNodeChildrenRef {
-            alloc: children.alloc,
             level: children.level,
             children: children.children,
         }
@@ -1147,27 +1182,8 @@ impl<'a, B, Key, Value> InnerNodeChildrenRef<'a, B, Key, Value> {
 
     fn iter(&self) -> InnerNodeChildrenIter<'a, B, Key, Value> {
         InnerNodeChildrenIter {
-            alloc: self.alloc,
             level: self.level,
             children: self.children.iter(),
-        }
-    }
-
-    fn clone(&self) -> InnerNodeChildrenContainer<B, Key, Value>
-    where
-        B: Clone,
-        Key: Clone,
-        Value: Clone,
-    {
-        let mut clone_children = self.alloc.children.new();
-        for child in self.iter() {
-            clone_children.push(child.clone().leak());
-        }
-
-        InnerNodeChildrenContainer {
-            alloc: self.alloc,
-            level: self.level,
-            children: clone_children.leak(),
         }
     }
 
@@ -1186,7 +1202,6 @@ impl<'a, B, Key, Value> InnerNodeChildrenRef<'a, B, Key, Value> {
 }
 
 pub(crate) struct InnerNodeChildrenIter<'a, B, Key, Value> {
-    alloc: Alloc,
     level: NonZeroUsize,
     children: slice::Iter<'a, Node<B, Key, Value>>,
 }
@@ -1197,7 +1212,6 @@ impl<'a, B, Key, Value> IntoIterator for InnerNodeChildrenRef<'a, B, Key, Value>
 
     fn into_iter(self) -> Self::IntoIter {
         InnerNodeChildrenIter {
-            alloc: self.alloc,
             level: self.level,
             children: self.children.iter(),
         }
@@ -1213,13 +1227,16 @@ impl<'a, B, Key, Value> Iterator for InnerNodeChildrenIter<'a, B, Key, Value> {
             // SAFETY: The level of a child of an inner node is always one less
             // than the level of the inner node. The children of an inner node
             // are allocated by the same Alloc as the inner node.
-            .map(|node| unsafe { self.alloc.wrap_ref(node, self.level.get() - 1) })
+            .map(|node| NodeRef {
+                node,
+                level: self.level.get() - 1,
+            })
     }
 }
 
 pub(crate) enum NodeChildrenRef<'a, B, Key, Value> {
     Inner(InnerNodeChildrenRef<'a, B, Key, Value>),
-    Leaf(FCVecRef<'a, (Key, Value)>),
+    Leaf(&'a [(Key, Value)]),
 }
 
 impl<'a, B, Key, Value> Debug for NodeChildrenRef<'a, B, Key, Value>
@@ -1241,18 +1258,6 @@ impl<'a, B, Key, Value> NodeChildrenRef<'a, B, Key, Value> {
         match self {
             NodeChildrenRef::Inner(children) => children.len(),
             NodeChildrenRef::Leaf(children) => children.len(),
-        }
-    }
-
-    fn clone(&self) -> NodeChildrenContainer<B, Key, Value>
-    where
-        B: Clone,
-        Key: Clone,
-        Value: Clone,
-    {
-        match self {
-            NodeChildrenRef::Inner(children) => NodeChildrenContainer::Inner(children.clone()),
-            NodeChildrenRef::Leaf(children) => NodeChildrenContainer::Leaf(children.clone()),
         }
     }
 
@@ -1332,7 +1337,6 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
 
     fn iter<'b>(&'b self) -> InnerNodeChildrenIter<'b, B, Key, Value> {
         InnerNodeChildrenIter {
-            alloc: self.alloc,
             level: self.level,
             children: self.children.iter(),
         }
@@ -1360,15 +1364,14 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
             // are allocated by the same Alloc as the inner node.
             .map(|node| unsafe { self.alloc.wrap(node, self.level.get() - 1) })
     }
-}
 
-impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, AABB<N, D>, Key, Value> {
     fn split(
         &mut self,
-        overflow_node: NodeContainer<AABB<N, D>, Key, Value>,
-    ) -> (AABB<N, D>, NodeContainer<AABB<N, D>, Key, Value>)
+        splitter: &mut impl Splitter<B>,
+        overflow_node: NodeContainer<B, Key, Value>,
+    ) -> (B, NodeContainer<B, Key, Value>)
     where
-        N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+        B: Clone,
     {
         if overflow_node.level != self.level.get() - 1 {
             panic!(
@@ -1377,7 +1380,7 @@ impl<'a, N, const D: usize, Key, Value> InnerNodeChildrenRefMut<'a, AABB<N, D>, 
                 self.level.get()
             );
         }
-        let (new_bounds, sibling_bounds, sibling_children) = split::quadratic(
+        let (new_bounds, sibling_bounds, sibling_children) = splitter.split(
             self.alloc.min_children,
             self.children_mut(),
             overflow_node.leak(),
@@ -1485,7 +1488,6 @@ impl<'a, B, Key, Value> Drop for InnerNodeChildrenContainer<B, Key, Value> {
 impl<'a, B, Key, Value> InnerNodeChildrenContainer<B, Key, Value> {
     fn borrow(&'a self) -> InnerNodeChildrenRef<'a, B, Key, Value> {
         InnerNodeChildrenRef {
-            alloc: self.alloc,
             level: self.level,
             children: &self.children,
         }

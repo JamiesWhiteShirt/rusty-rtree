@@ -24,6 +24,8 @@ use filter::{JoinFilter, SpatialFilter};
 use iter::{FilterIter, TreeIter, TreeIterMut};
 use node::{Alloc, Node, NodeRef, NodeRefMut, RootNodeRefMut};
 use ranking::Ranking;
+use select::MinimalVolumeIncreaseSelector;
+use split::QuadraticSplitter;
 use std::{borrow::Borrow, fmt::Debug, ops::Sub};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -89,10 +91,9 @@ where
 {
     fn clone(&self) -> Self {
         let ops = self.ops();
-        let root = unsafe { ops.wrap_ref(&self.root, self.height) }.clone();
         RTree {
             height: self.height,
-            root: root.leak(),
+            root: unsafe { ops.clone_node(self.node_ref()) }.leak(),
             config: self.config,
         }
     }
@@ -114,8 +115,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
     }
 
     fn node_ref(&self) -> NodeRef<B, Key, Value> {
-        let ops = self.ops();
-        unsafe { ops.wrap_ref(&self.root, self.height) }
+        unsafe { NodeRef::new(&self.root, self.height) }
     }
 
     /// Returns an iterator over all entries in the R-tree.
@@ -357,9 +357,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
 
     /// Returns the number of entries in the R-tree.
     pub fn len(&self) -> usize {
-        let ops = self.ops();
-        let root = unsafe { ops.wrap_ref(&self.root, self.height) };
-        root.len()
+        self.node_ref().len()
     }
 
     fn _debug_assert_bvh(&self)
@@ -385,7 +383,8 @@ impl<B, Key, Value> RTree<B, Key, Value> {
     where
         B: Debug,
     {
-        self.node_ref()._debug_assert_min_children(true);
+        self.node_ref()
+            ._debug_assert_min_children(true, self.config.min_children);
     }
 }
 
@@ -399,7 +398,12 @@ where
     pub fn insert(&mut self, key: Key, value: Value) {
         let ops = self.ops();
         let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
-        root.insert(key, value)
+        root.insert(
+            &mut MinimalVolumeIncreaseSelector,
+            &mut QuadraticSplitter,
+            key,
+            value,
+        )
     }
 
     /// Inserts a new key-value pair into the R-tree, or replaces the value of
@@ -409,7 +413,12 @@ where
     pub fn insert_unique(&mut self, key: Key, value: Value) -> Option<Value> {
         let ops = self.ops();
         let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
-        root.insert_unique(key, value)
+        root.insert_unique(
+            &mut MinimalVolumeIncreaseSelector,
+            &mut QuadraticSplitter,
+            key,
+            value,
+        )
     }
 
     /// Removes the entry with the given key, returning the value of the entry
@@ -424,7 +433,11 @@ where
         Key: Borrow<Q>,
         Q: Eq + Bounded<AABB<N, D>> + ?Sized,
     {
-        self.root_ref_mut().remove(key)
+        self.root_ref_mut().remove(
+            &mut MinimalVolumeIncreaseSelector,
+            &mut QuadraticSplitter,
+            key,
+        )
     }
 }
 
