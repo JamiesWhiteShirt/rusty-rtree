@@ -3,20 +3,20 @@ use std::{cmp, ops::Sub};
 use array_init::from_iter;
 
 use crate::{
-    bounds::{Bounded, AABB},
+    bounds::{Bounded, AABB, SAABB},
     intersects::{line_bounds_intersect, Intersects},
-    vector::Vector,
+    vector::SVec,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Line<N, const D: usize>(pub Vector<N, D>, pub Vector<N, D>);
+pub struct Line<N, const D: usize>(pub SVec<N, D>, pub SVec<N, D>);
 
-impl<N, const D: usize> Bounded<AABB<N, D>> for Line<N, D>
+impl<N, const D: usize> Bounded<SAABB<N, D>> for Line<N, D>
 where
     N: Ord + Clone + num_traits::Bounded,
 {
-    fn bounds(&self) -> AABB<N, D> {
-        let min = Vector(
+    fn bounds(&self) -> SAABB<N, D> {
+        let min = SVec(
             from_iter(
                 self.0
                     .zip(&self.1)
@@ -24,7 +24,7 @@ where
             )
             .unwrap(),
         );
-        let max = Vector(
+        let max = SVec(
             from_iter(
                 self.0
                     .zip(&self.1)
@@ -40,7 +40,7 @@ impl<N, const D: usize> Line<N, D>
 where
     N: Clone + Sub<Output = N> + Into<f64>,
 {
-    pub fn delta(&self) -> Vector<N, D> {
+    pub fn delta(&self) -> SVec<N, D> {
         self.1.clone() - self.0.clone()
     }
 
@@ -53,11 +53,11 @@ where
     }
 }
 
-impl<N, const D: usize> Intersects<AABB<N, D>> for Line<N, D>
+impl<N, const D: usize> Intersects<SAABB<N, D>> for Line<N, D>
 where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
 {
-    fn intersects(&self, rhs: &AABB<N, D>) -> bool {
+    fn intersects(&self, rhs: &SAABB<N, D>) -> bool {
         line_bounds_intersect(rhs, &self.0, &self.delta())
     }
 }

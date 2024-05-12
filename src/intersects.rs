@@ -1,6 +1,6 @@
 use std::ops::Sub;
 
-use crate::{bounds::AABB, vector::Vector};
+use crate::{bounds::SAABB, vector::SVec};
 
 pub trait Intersects<T> {
     fn intersects(&self, rhs: &T) -> bool;
@@ -31,9 +31,9 @@ fn f64_max(lhs: f64, rhs: f64) -> f64 {
 /// This is equivalent because in all comparisons, both operands are inversely
 /// scaled with the magnitude of the delta.
 pub(crate) fn ray_bounds_intersect<N, const D: usize>(
-    b: &AABB<N, D>,
-    origin: &Vector<N, D>,
-    delta: &Vector<N, D>,
+    b: &SAABB<N, D>,
+    origin: &SVec<N, D>,
+    delta: &SVec<N, D>,
 ) -> bool
 where
     N: Clone + Sub<Output = N> + Into<f64>,
@@ -58,9 +58,9 @@ where
 }
 
 pub(crate) fn line_bounds_intersect<N, const D: usize>(
-    b: &AABB<N, D>,
-    origin: &Vector<N, D>,
-    delta: &Vector<N, D>,
+    b: &SAABB<N, D>,
+    origin: &SVec<N, D>,
+    delta: &SVec<N, D>,
 ) -> bool
 where
     N: Clone + Sub<Output = N> + Into<f64>,
@@ -82,32 +82,36 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::{bounds::AABB, intersects::line_bounds_intersect, vector::Vector};
+    use crate::{
+        bounds::{AABB, SAABB},
+        intersects::line_bounds_intersect,
+        vector::SVec,
+    };
 
     #[test]
     fn test_line_bounds_intersect() {
-        let bounds: AABB<i32, 2> = AABB {
-            min: Vector([0, 0]),
-            max: Vector([5, 5]),
+        let bounds: SAABB<i32, 2> = AABB {
+            min: SVec([0, 0]),
+            max: SVec([5, 5]),
         };
-        let origin = Vector([6, 0]);
-        let delta = Vector([-5, 5]);
+        let origin = SVec([6, 0]);
+        let delta = SVec([-5, 5]);
 
         assert!(line_bounds_intersect(&bounds, &origin, &delta));
     }
 
     #[test]
     fn test_line_bounds_not_intersect() {
-        let bounds: AABB<i32, 2> = AABB {
-            min: Vector([0, 0]),
-            max: Vector([4, 4]),
+        let bounds: SAABB<i32, 2> = AABB {
+            min: SVec([0, 0]),
+            max: SVec([4, 4]),
         };
-        let origin = Vector([-2, 3]);
-        let delta = Vector([4, 4]);
+        let origin = SVec([-2, 3]);
+        let delta = SVec([4, 4]);
         assert!(!line_bounds_intersect(&bounds, &origin, &delta));
 
-        let origin = Vector([5, 2]);
-        let delta = Vector([4, 0]);
+        let origin = SVec([5, 2]);
+        let delta = SVec([4, 0]);
         assert!(!line_bounds_intersect(&bounds, &origin, &delta));
     }
 }

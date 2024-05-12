@@ -1,21 +1,18 @@
-use std::{mem::swap, ops::Sub};
+use std::mem::swap;
 
 use noisy_float::types::N64;
 use num_traits::Float;
 
 use crate::{
-    bounds::{Bounded, Bounds, AABB},
+    bounds::{Bounded, Bounds, Volume},
     fc_vec::{FCVecContainer, FCVecRefMut},
 };
 
 /// Returns a pair of indices (a, b) where a < b. b is therefore also never zero.
-fn worst_combination<N, const D: usize, Value>(
-    values: &[Value],
-    overflow_value: &Value,
-) -> (usize, usize)
+fn worst_combination<B, Value>(values: &[Value], overflow_value: &Value) -> (usize, usize)
 where
-    N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-    Value: Bounded<AABB<N, D>>,
+    B: Bounds + Volume,
+    Value: Bounded<B>,
 {
     if values.len() < 1 {
         panic!("Must have more than 2 values!");
@@ -52,13 +49,10 @@ where
 /// Seeds splitting of values into two groups by finding two values which will
 /// form the seeds of two groups. The seed of the first group is moved to
 /// values[0], while the seed of the second group is returned.
-fn seed_split_groups<N, const D: usize, Value>(
-    values: &mut [Value],
-    mut overflow_value: Value,
-) -> Value
+fn seed_split_groups<B, Value>(values: &mut [Value], mut overflow_value: Value) -> Value
 where
-    N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-    Value: Bounded<AABB<N, D>>,
+    B: Bounds + Volume,
+    Value: Bounded<B>,
 {
     let (i_1, i_2) = worst_combination(values, &overflow_value);
     values.swap(0, i_1);
@@ -68,13 +62,10 @@ where
     overflow_value
 }
 
-fn best_candidate_for_group<N, const D: usize, Value>(
-    children: &[Value],
-    bounds: &AABB<N, D>,
-) -> Option<(usize, N64)>
+fn best_candidate_for_group<B, Value>(children: &[Value], bounds: &B) -> Option<(usize, N64)>
 where
-    N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
-    Value: Bounded<AABB<N, D>>,
+    B: Bounds + Volume,
+    Value: Bounded<B>,
 {
     children
         .into_iter()
@@ -98,18 +89,18 @@ pub trait Splitter<B> {
 
 pub struct QuadraticSplitter;
 
-impl<N, const D: usize> Splitter<AABB<N, D>> for QuadraticSplitter
+impl<B> Splitter<B> for QuadraticSplitter
 where
-    N: Ord + Clone + Sub<Output = N> + Into<f64> + num_traits::Bounded,
+    B: Bounds + Volume,
 {
     fn split<'a, Value>(
         &mut self,
         min_children: usize,
         mut values: FCVecRefMut<'a, Value>,
         overflow_value: Value,
-    ) -> (AABB<N, D>, AABB<N, D>, FCVecContainer<Value>)
+    ) -> (B, B, FCVecContainer<Value>)
     where
-        Value: Bounded<AABB<N, D>>,
+        Value: Bounded<B>,
     {
         if values.len() < 1 {
             panic!("Must have more than 2 children to split!");

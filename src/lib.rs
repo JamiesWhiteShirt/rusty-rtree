@@ -18,7 +18,7 @@ mod split;
 mod util;
 pub mod vector;
 
-use bounds::{Bounded, Bounds, AABB};
+use bounds::{Bounded, Bounds, Volume};
 use contains::Contains;
 use filter::{JoinFilter, SpatialFilter};
 use iter::{FilterIter, TreeIter, TreeIterMut};
@@ -26,7 +26,7 @@ use node::{Alloc, Node, NodeRef, NodeRefMut, RootNodeRefMut};
 use ranking::Ranking;
 use select::MinimalVolumeIncreaseSelector;
 use split::QuadraticSplitter;
-use std::{borrow::Borrow, fmt::Debug, ops::Sub};
+use std::{borrow::Borrow, fmt::Debug};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct RTreeConfig {
@@ -388,10 +388,10 @@ impl<B, Key, Value> RTree<B, Key, Value> {
     }
 }
 
-impl<N, const D: usize, Key, Value> RTree<AABB<N, D>, Key, Value>
+impl<B, Key, Value> RTree<B, Key, Value>
 where
-    N: Ord + num_traits::Bounded + Clone + Sub<Output = N> + Into<f64>,
-    Key: Bounded<AABB<N, D>> + Eq,
+    B: Bounds + Volume + Clone,
+    Key: Bounded<B> + Eq,
 {
     // Inserts a new key-value pair into the R-tree, ignoring any existing
     // entries with the same key.
@@ -431,7 +431,7 @@ where
     pub fn remove<Q>(&mut self, key: &Q) -> Option<Value>
     where
         Key: Borrow<Q>,
-        Q: Eq + Bounded<AABB<N, D>> + ?Sized,
+        Q: Eq + Bounded<B> + ?Sized,
     {
         self.root_ref_mut().remove(
             &mut MinimalVolumeIncreaseSelector,
@@ -491,66 +491,65 @@ mod tests {
     use crate::filter::JoinFilter;
     use crate::geom::line::Line;
     use crate::geom::sphere::Sphere;
-    use crate::intersects::Intersects;
     use crate::ranking::EuclideanDistanceRanking;
     use crate::ranking::PointDistance;
-    use crate::vector::Vector;
+    use crate::vector::SVec;
     use crate::RTreeConfig;
 
-    use super::bounds::AABB;
+    use super::bounds::SAABB;
     use super::RTree;
 
     #[test]
     fn insert() {
-        let mut tree = RTree::<AABB<i32, 2>, AABB<i32, 2>, ()>::new(RTreeConfig {
+        let mut tree = RTree::<SAABB<i32, 2>, SAABB<i32, 2>, ()>::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
 
         tree.insert(
-            AABB {
-                min: Vector([0, 0]),
-                max: Vector([1, 1]),
+            SAABB {
+                min: SVec([0, 0]),
+                max: SVec([1, 1]),
             },
             (),
         );
 
         tree.insert(
-            AABB {
-                min: Vector([2, 0]),
-                max: Vector([3, 1]),
+            SAABB {
+                min: SVec([2, 0]),
+                max: SVec([3, 1]),
             },
             (),
         );
 
         tree.insert(
-            AABB {
-                min: Vector([0, 2]),
-                max: Vector([1, 3]),
+            SAABB {
+                min: SVec([0, 2]),
+                max: SVec([1, 3]),
             },
             (),
         );
 
         tree.insert(
-            AABB {
-                min: Vector([2, 2]),
-                max: Vector([3, 3]),
+            SAABB {
+                min: SVec([2, 2]),
+                max: SVec([3, 3]),
             },
             (),
         );
 
         tree.insert(
-            AABB {
-                min: Vector([0, 2]),
-                max: Vector([0, 2]),
+            SAABB {
+                min: SVec([0, 2]),
+                max: SVec([0, 2]),
             },
             (),
         );
 
         tree.insert(
-            AABB {
-                min: Vector([1, 3]),
-                max: Vector([1, 3]),
+            SAABB {
+                min: SVec([1, 3]),
+                max: SVec([1, 3]),
             },
             (),
         );
@@ -558,14 +557,14 @@ mod tests {
 
     #[test]
     fn get() {
-        let mut tree = RTree::<AABB<i32, 2>, AABB<i32, 2>, bool>::new(RTreeConfig {
+        let mut tree = RTree::<SAABB<i32, 2>, SAABB<i32, 2>, bool>::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
 
-        let key = AABB {
-            min: Vector([0, 0]),
-            max: Vector([1, 1]),
+        let key = SAABB {
+            min: SVec([0, 0]),
+            max: SVec([1, 1]),
         };
         tree.insert(key, true);
 
@@ -574,14 +573,14 @@ mod tests {
 
     #[test]
     fn get_mut() {
-        let mut tree = RTree::<AABB<i32, 2>, AABB<i32, 2>, bool>::new(RTreeConfig {
+        let mut tree = RTree::<SAABB<i32, 2>, SAABB<i32, 2>, bool>::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
 
-        let key = AABB {
-            min: Vector([0, 0]),
-            max: Vector([1, 1]),
+        let key = SAABB {
+            min: SVec([0, 0]),
+            max: SVec([1, 1]),
         };
         tree.insert(key, false);
 
@@ -592,7 +591,7 @@ mod tests {
 
     #[test]
     fn insert_unique() {
-        let mut tree = RTree::<AABB<i32, 2>, AABB<i32, 2>, u16>::new(RTreeConfig {
+        let mut tree = RTree::<SAABB<i32, 2>, SAABB<i32, 2>, u16>::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
@@ -604,9 +603,9 @@ mod tests {
                 0xDE, 0xAD, 0xBE, 0xEF,
             ]);
             for i in 0..50 {
-                let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
-                let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
-                tree.insert(AABB { min, max }, i);
+                let min = SVec([rng.gen_range(0..991), rng.gen_range(0..991)]);
+                let max = min + SVec([rng.gen_range(1..11), rng.gen_range(1..11)]);
+                tree.insert(SAABB { min, max }, i);
                 tree._debug_assert_bvh();
                 assert_eq!(tree.len(), usize::from(i + 1))
             }
@@ -614,9 +613,9 @@ mod tests {
 
         let len_before = tree.len();
 
-        let key = AABB {
-            min: Vector([-1, -1]),
-            max: Vector([-1, -1]),
+        let key = SAABB {
+            min: SVec([-1, -1]),
+            max: SVec([-1, -1]),
         };
         // If this fails, this key was generated by chance
         assert_eq!(tree.get(&key), None);
@@ -633,8 +632,8 @@ mod tests {
 
     #[test]
     fn clone() {
-        let mut tree: RTree<AABB<i32, 2>, AABB<i32, 2>, i32> =
-            RTree::<AABB<i32, 2>, AABB<i32, 2>, i32>::new(RTreeConfig {
+        let mut tree: RTree<SAABB<i32, 2>, SAABB<i32, 2>, i32> =
+            RTree::<SAABB<i32, 2>, SAABB<i32, 2>, i32>::new(RTreeConfig {
                 max_children: 4,
                 min_children: 2,
             });
@@ -646,9 +645,9 @@ mod tests {
                 0xDE, 0xAD, 0xBE, 0xEF,
             ]);
             for i in 0..50 {
-                let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
-                let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
-                tree.insert(AABB { min, max }, i);
+                let min = SVec([rng.gen_range(0..991), rng.gen_range(0..991)]);
+                let max = min + SVec([rng.gen_range(1..11), rng.gen_range(1..11)]);
+                tree.insert(SAABB { min, max }, i);
                 tree._debug_assert_bvh();
             }
         }
@@ -659,7 +658,7 @@ mod tests {
 
     #[test]
     fn remove() {
-        let mut tree: RTree<AABB<i32, 2>, AABB<i32, 2>, i32> = RTree::new(RTreeConfig {
+        let mut tree: RTree<SAABB<i32, 2>, SAABB<i32, 2>, i32> = RTree::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
@@ -671,9 +670,9 @@ mod tests {
                 0xDE, 0xAD, 0xBE, 0xEF,
             ]);
             for i in 0..50 {
-                let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
-                let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
-                tree.insert(AABB { min, max }, i);
+                let min = SVec([rng.gen_range(0..991), rng.gen_range(0..991)]);
+                let max = min + SVec([rng.gen_range(1..11), rng.gen_range(1..11)]);
+                tree.insert(SAABB { min, max }, i);
                 tree._debug_assert_bvh();
                 tree._debug_assert_min_children();
             }
@@ -686,9 +685,9 @@ mod tests {
                 0xDE, 0xAD, 0xBE, 0xEF,
             ]);
             for i in 0..50 {
-                let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
-                let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
-                assert_eq!(tree.remove(&AABB { min, max }), Some(i));
+                let min = SVec([rng.gen_range(0..991), rng.gen_range(0..991)]);
+                let max = min + SVec([rng.gen_range(1..11), rng.gen_range(1..11)]);
+                assert_eq!(tree.remove(&SAABB { min, max }), Some(i));
                 tree._debug_assert_bvh();
             }
         }
@@ -704,20 +703,20 @@ mod tests {
             0xDE, 0xAD, 0xBE, 0xEF,
         ]);
 
-        let mut tree = RTree::<AABB<i32, 2>, AABB<i32, 2>, i32>::new(RTreeConfig {
+        let mut tree = RTree::<SAABB<i32, 2>, SAABB<i32, 2>, i32>::new(RTreeConfig {
             max_children,
             min_children,
         });
         for i in 0..10000 {
-            let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
-            let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
-            tree.insert(AABB { min, max }, i);
+            let min = SVec([rng.gen_range(0..991), rng.gen_range(0..991)]);
+            let max = min + SVec([rng.gen_range(1..11), rng.gen_range(1..11)]);
+            tree.insert(SAABB { min, max }, i);
         }
 
         bencher.iter(|| {
-            let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
-            let max = min + Vector([10, 10]);
-            tree.insert(AABB { min, max }, 0)
+            let min = SVec([rng.gen_range(0..991), rng.gen_range(0..991)]);
+            let max = min + SVec([10, 10]);
+            tree.insert(SAABB { min, max }, 0)
         });
     }
 
@@ -769,20 +768,21 @@ mod tests {
             0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
             0xDE, 0xAD, 0xBE, 0xEF,
         ]);
-        let mut tree = RTree::<AABB<i32, 2>, AABB<i32, 2>, i32>::new(RTreeConfig {
+        let mut tree = RTree::<SAABB<i32, 2>, SAABB<i32, 2>, i32>::new(RTreeConfig {
             max_children,
             min_children: max_children / 2,
         });
         for i in 0..10000 {
-            let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
-            let max = min + Vector([rng.gen_range(1..11), rng.gen_range(1..11)]);
-            tree.insert(AABB { min, max }, i);
+            let min = SVec([rng.gen_range(0..991), rng.gen_range(0..991)]);
+            let max = min + SVec([rng.gen_range(1..11), rng.gen_range(1..11)]);
+            tree.insert(SAABB { min, max }, i);
         }
 
         bencher.iter(|| {
-            let min = Vector([rng.gen_range(0..991), rng.gen_range(0..991)]);
-            let max = min + Vector([10, 10]);
-            for entry in tree.filter_iter(BoundedIntersectsFilter::new_bounded(AABB { min, max })) {
+            let min = SVec([rng.gen_range(0..991), rng.gen_range(0..991)]);
+            let max = min + SVec([10, 10]);
+            for entry in tree.filter_iter(BoundedIntersectsFilter::new_bounded(SAABB { min, max }))
+            {
                 black_box(entry);
             }
         });
@@ -801,14 +801,14 @@ mod tests {
 
     fn record_to_star(
         record: csv::StringRecord,
-    ) -> Result<(Vector<N32, 3>, StarInfo), Box<dyn Error>> {
+    ) -> Result<(SVec<N32, 3>, StarInfo), Box<dyn Error>> {
         let id: u32 = record[0].parse()?;
         let proper: String = record[6].parse()?;
         let x: N32 = n32(record[17].parse()?);
         let y: N32 = n32(record[18].parse()?);
         let z: N32 = n32(record[19].parse()?);
 
-        Ok((Vector([x, y, z]), StarInfo { id, proper }))
+        Ok((SVec([x, y, z]), StarInfo { id, proper }))
     }
 
     #[derive(Debug, Clone)]
@@ -824,7 +824,7 @@ mod tests {
 
     #[test]
     fn cosmic() -> Result<(), Box<dyn Error>> {
-        let mut stars = RTree::<AABB<N32, 3>, Vector<N32, 3>, StarInfo>::new(RTreeConfig {
+        let mut stars = RTree::<SAABB<N32, 3>, SVec<N32, 3>, StarInfo>::new(RTreeConfig {
             min_children: 4,
             max_children: 32,
         });
@@ -848,12 +848,12 @@ mod tests {
             center: sol_pos,
             radius: n32(100.0),
         };
-        let bounds: AABB<N32, 3> = AABB {
+        let bounds: SAABB<N32, 3> = SAABB {
             min: sol_pos.into_map(|coord| coord - 100.0),
             max: sol_pos.into_map(|coord| coord + 100.0),
         };
 
-        let mut star_lines = RTree::<AABB<N32, 3>, Line<N32, 3>, ()>::new(RTreeConfig {
+        let mut star_lines = RTree::<SAABB<N32, 3>, Line<N32, 3>, ()>::new(RTreeConfig {
             min_children: 4,
             max_children: 32,
         });
@@ -894,11 +894,11 @@ mod tests {
             _unit: CountedUnit<'a>,
         }
 
-        impl<'a> Bounded<AABB<u32, 2>> for Key<'a> {
-            fn bounds(&self) -> AABB<u32, 2> {
-                AABB {
-                    min: Vector([self.i, self.i]),
-                    max: Vector([self.i + 1, self.i + 1]),
+        impl<'a> Bounded<SAABB<u32, 2>> for Key<'a> {
+            fn bounds(&self) -> SAABB<u32, 2> {
+                SAABB {
+                    min: SVec([self.i, self.i]),
+                    max: SVec([self.i + 1, self.i + 1]),
                 }
             }
         }
@@ -913,7 +913,7 @@ mod tests {
 
         let value_count = RefCell::new(0);
         let key_count = RefCell::new(0);
-        let mut tree = RTree::<AABB<u32, 2>, Key, CountedUnit>::new(RTreeConfig {
+        let mut tree = RTree::<SAABB<u32, 2>, Key, CountedUnit>::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
@@ -937,27 +937,27 @@ mod tests {
 
     #[test]
     fn sorted_iter_asc() {
-        let mut tree = RTree::<AABB<i32, 2>, Vector<i32, 2>, ()>::new(RTreeConfig {
+        let mut tree = RTree::<SAABB<i32, 2>, SVec<i32, 2>, ()>::new(RTreeConfig {
             max_children: 4,
             min_children: 2,
         });
 
         for x in 0..10 {
             for y in 0..10 {
-                tree.insert(Vector([x * 10, y * 10]), ());
+                tree.insert(SVec([x * 10, y * 10]), ());
             }
         }
 
         let mut visited = [[false; 10]; 10];
-        fn mark_visited(visited: &mut [[bool; 10]; 10], key: &Vector<i32, 2>) {
+        fn mark_visited(visited: &mut [[bool; 10]; 10], key: &SVec<i32, 2>) {
             let x = key[0] as usize / 10;
             let y = key[1] as usize / 10;
             assert!(!visited[x][y]);
             visited[x][y] = true;
         }
 
-        let center = Vector([9, 9]);
-        let ranking = EuclideanDistanceRanking::<i32, 2, Vector<i32, 2>>::new(center);
+        let center = SVec([9, 9]);
+        let ranking = EuclideanDistanceRanking::<SVec<i32, 2>, i32>::new(center);
 
         let mut iter = tree.iter_asc_by(ranking);
         let mut last_dist = {
@@ -988,22 +988,22 @@ mod tests {
             0xDE, 0xAD, 0xBE, 0xEF,
         ]);
         let tree0 = {
-            let mut tree = RTree::<AABB<i32, 2>, Vector<i32, 2>, usize>::new(RTreeConfig {
+            let mut tree = RTree::<SAABB<i32, 2>, SVec<i32, 2>, usize>::new(RTreeConfig {
                 max_children: 4,
                 min_children: 2,
             });
             for i in 0..50usize {
-                tree.insert(Vector([rng.gen_range(0..100), rng.gen_range(0..100)]), i);
+                tree.insert(SVec([rng.gen_range(0..100), rng.gen_range(0..100)]), i);
             }
             tree
         };
         let tree1 = {
-            let mut tree = RTree::<AABB<i32, 2>, Vector<i32, 2>, usize>::new(RTreeConfig {
+            let mut tree = RTree::<SAABB<i32, 2>, SVec<i32, 2>, usize>::new(RTreeConfig {
                 max_children: 4,
                 min_children: 2,
             });
             for i in 0..50usize {
-                tree.insert(Vector([rng.gen_range(0..100), rng.gen_range(0..100)]), i);
+                tree.insert(SVec([rng.gen_range(0..100), rng.gen_range(0..100)]), i);
             }
             tree
         };
@@ -1011,16 +1011,16 @@ mod tests {
         #[derive(Clone)]
         struct DistanceFilter(N64);
 
-        impl<N, const D: usize> JoinFilter<AABB<N, D>, AABB<N, D>, Vector<N, D>, Vector<N, D>>
+        impl<N, const D: usize> JoinFilter<SAABB<N, D>, SAABB<N, D>, SVec<N, D>, SVec<N, D>>
             for DistanceFilter
         where
             N: Ord + Clone + Add<Output = N> + Sub<Output = N> + Mul<Output = N> + Into<f64>,
         {
-            fn test_bounds(&self, bounds0: &AABB<N, D>, bounds1: &AABB<N, D>) -> bool {
+            fn test_bounds(&self, bounds0: &SAABB<N, D>, bounds1: &SAABB<N, D>) -> bool {
                 bounds0.sq_dist_to(bounds1) < self.0 * self.0
             }
 
-            fn test_key(&self, key0: &Vector<N, D>, key1: &Vector<N, D>) -> bool {
+            fn test_key(&self, key0: &SVec<N, D>, key1: &SVec<N, D>) -> bool {
                 n64((key0.clone() - key1.clone()).sq_mag().into()) < self.0 * self.0
             }
         }

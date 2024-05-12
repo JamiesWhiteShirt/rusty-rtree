@@ -558,7 +558,6 @@ where
         on_underfull: &mut impl FnMut(NodeChildrenContainer<B, Key, Value>),
     ) -> Option<Value>
     where
-        B: Intersects<B>,
         Key: Eq + Borrow<Q>,
         Q: Bounded<B> + Eq + ?Sized,
     {
@@ -802,7 +801,6 @@ where
         key: &Q,
     ) -> Option<Value>
     where
-        B: Intersects<B>,
         Key: Eq + Borrow<Q>,
         Q: Bounded<B> + Eq + ?Sized,
     {

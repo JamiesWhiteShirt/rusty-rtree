@@ -1,13 +1,12 @@
 use std::{
-    cmp,
     marker::PhantomData,
     ops::{Add, Mul, Sub},
 };
 
-use array_init::from_iter;
-use itertools::izip;
-
-use crate::{bounds::AABB, vector::Vector};
+use crate::{
+    bounds::AABB,
+    vector::{SVec, Vector},
+};
 
 /// A trait for defining a weak ordering of R-tree keys by a metric. In addition
 /// to providing a metric for keys, a ranking can also provide a lower bound
@@ -39,47 +38,51 @@ where
     fn rank_key(&self, key: &Key) -> Self::Metric;
 }
 
-pub trait PointDistance<N, const D: usize> {
-    fn dist_sq(&self, point: &Vector<N, D>) -> N;
+pub trait PointDistance<V, N> {
+    fn dist_sq(&self, point: &V) -> N;
 }
 
-impl<N, const D: usize> PointDistance<N, D> for Vector<N, D>
+impl<N, const D: usize> PointDistance<SVec<N, D>, N> for SVec<N, D>
 where
     N: Clone + Sub<Output = N> + Mul<Output = N> + Add<Output = N>,
 {
-    fn dist_sq(&self, point: &Vector<N, D>) -> N {
+    fn dist_sq(&self, point: &SVec<N, D>) -> N {
         (self.clone() - point.clone()).sq_mag()
+    }
+}
+
+impl<V, N> PointDistance<V, N> for AABB<V>
+where
+    V: Vector + PointDistance<V, N>,
+{
+    fn dist_sq(&self, point: &V) -> N {
+        let closest_point = point
+            .componentwise_max(&self.min)
+            .componentwise_min(&self.max);
+
+        closest_point.dist_sq(point)
     }
 }
 
 /// Orders keys by euclidean distance to a given point. Requires that the key
 /// type implements [`PointDistance`]. The metric used by this is the squared
-/// euclidean distance as `N`. `N` must support multiplication, addition and
-/// subtraction, and must have a sufficient range to represent the squared
-/// distance between the given point and the furthest point in the R-tree's
-/// bounds. Failure to support the required range may cause numeric overflow and
-/// incorrect results.
+/// euclidean distance as `M`. `M` must have a sufficient range to represent the
+/// squared distance between the given point and the furthest point in the
+/// R-tree's bounds. Failure to support the required range may cause numeric
+/// overflow and incorrect results.
 ///
-/// In general, `N` should likely be some totally ordered floating point number
+/// In general, `M` should likely be some totally ordered floating point number
 /// to avoid overflow, though this is not always required. For R-trees with
 /// integer coordinates, `N` can be an integer type provided it has sufficient
 /// range.
 #[derive(Clone, Copy, Debug)]
-pub struct EuclideanDistanceRanking<N, const D: usize, Key>
-where
-    Key: ?Sized + PointDistance<N, D>,
-    N: Ord + Clone + Sub<Output = N> + Mul<Output = N> + Add<Output = N>,
-{
-    point: Vector<N, D>,
-    _phantom: PhantomData<Key>,
+pub struct EuclideanDistanceRanking<V, M> {
+    point: V,
+    _phantom: PhantomData<M>,
 }
 
-impl<N, const D: usize, Key> EuclideanDistanceRanking<N, D, Key>
-where
-    Key: ?Sized + PointDistance<N, D>,
-    N: Ord + Clone + Sub<Output = N> + Mul<Output = N> + Add<Output = N>,
-{
-    pub fn new(point: Vector<N, D>) -> Self {
+impl<V, M> EuclideanDistanceRanking<V, M> {
+    pub fn new(point: V) -> Self {
         Self {
             point,
             _phantom: PhantomData,
@@ -87,26 +90,16 @@ where
     }
 }
 
-impl<N, const D: usize, Key, T> Ranking<AABB<T, D>, Key> for EuclideanDistanceRanking<N, D, Key>
+impl<B, V, Key, M> Ranking<B, Key> for EuclideanDistanceRanking<V, M>
 where
-    Key: ?Sized + PointDistance<N, D>,
-    N: Ord + Clone + Sub<Output = N> + Mul<Output = N> + Add<Output = N>,
-    T: Clone + Into<N>,
+    Key: ?Sized + PointDistance<V, M>,
+    B: PointDistance<V, M>,
+    M: Ord,
 {
-    type Metric = N;
+    type Metric = M;
 
-    fn bounds_min(&self, bounds: &AABB<T, D>) -> Self::Metric {
-        let closest_point: Vector<N, D> = Vector(
-            from_iter(
-                izip!(&bounds.min.0, &bounds.max.0, &self.point.0).map(|(min, max, pt)| {
-                    cmp::max(min.clone().into(), cmp::min(max.clone().into(), pt.clone()))
-                }),
-            )
-            .unwrap(),
-        )
-        .into_map(Into::into);
-
-        closest_point.dist_sq(&self.point)
+    fn bounds_min(&self, bounds: &B) -> Self::Metric {
+        bounds.dist_sq(&self.point)
     }
 
     fn rank_key(&self, key: &Key) -> Self::Metric {
