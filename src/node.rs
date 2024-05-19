@@ -10,7 +10,6 @@ use crate::{
     bounds::{Bounded, Bounds},
     contains::Contains,
     fc_vec::{self, FCVec, FCVecContainer, FCVecRefMut},
-    intersects::Intersects,
     select::Selector,
     split::Splitter,
     util::{get_only, GetOnlyResult},
@@ -176,7 +175,7 @@ where
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Alloc {
     children: fc_vec::Alloc,
     min_children: usize,
@@ -600,7 +599,19 @@ where
 }
 
 impl<'a, B, Key, Value> NodeRefMut<'a, B, Key, Value> {
-    fn into_children_mut(self) -> NodeChildrenRefMut<'a, B, Key, Value> {
+    pub(crate) fn level(&self) -> usize {
+        self.level
+    }
+
+    pub(crate) fn node(&self) -> &Node<B, Key, Value> {
+        &self.node
+    }
+
+    pub(crate) fn into_node(self) -> &'a mut Node<B, Key, Value> {
+        self.node
+    }
+
+    pub(crate) fn into_children_mut(self) -> NodeChildrenRefMut<'a, B, Key, Value> {
         if let Some(level) = NonZeroUsize::new(self.level) {
             NodeChildrenRefMut::Inner(InnerNodeChildrenRefMut {
                 alloc: self.alloc,
@@ -621,7 +632,7 @@ impl<'a, B, Key, Value> NodeRefMut<'a, B, Key, Value> {
         }
     }
 
-    fn children_mut<'b>(&'b mut self) -> NodeChildrenRefMut<'b, B, Key, Value> {
+    pub(crate) fn children_mut<'b>(&'b mut self) -> NodeChildrenRefMut<'b, B, Key, Value> {
         if let Some(level) = NonZeroUsize::new(self.level) {
             NodeChildrenRefMut::Inner(InnerNodeChildrenRefMut {
                 alloc: self.alloc,
@@ -650,7 +661,7 @@ impl<'a, B, Key, Value> NodeRefMut<'a, B, Key, Value> {
     /// It is undefined behavior to drop a node that has already been dropped.
     ///
     /// It is undefined behavior to use a node after dropping it.
-    pub(crate) unsafe fn drop(mut self) {
+    unsafe fn drop(mut self) {
         match self.children_mut() {
             NodeChildrenRefMut::Inner(children) => {
                 children.drop();
@@ -917,6 +928,15 @@ impl<'a, B, Key, Value> RootNodeRefMut<'a, B, Key, Value> {
     }
 }
 
+impl<B, Key, Value> Bounded<B> for RootNodeRefMut<'_, B, Key, Value>
+where
+    B: Clone,
+{
+    fn bounds(&self) -> B {
+        self.node.bounds()
+    }
+}
+
 pub(crate) struct NodeContainer<B, Key, Value> {
     alloc: Alloc,
     level: usize,
@@ -924,17 +944,25 @@ pub(crate) struct NodeContainer<B, Key, Value> {
 }
 
 impl<'a, B, Key, Value> NodeContainer<B, Key, Value> {
-    fn borrow(&self) -> NodeRef<B, Key, Value> {
+    pub(crate) fn borrow(&self) -> NodeRef<B, Key, Value> {
         NodeRef {
             level: self.level,
             node: &self.node,
         }
     }
 
-    fn borrow_mut(&mut self) -> NodeRefMut<B, Key, Value> {
+    pub(crate) fn borrow_mut(&mut self) -> NodeRefMut<B, Key, Value> {
         NodeRefMut {
             alloc: self.alloc,
             level: self.level,
+            node: &mut self.node,
+        }
+    }
+
+    pub(crate) fn borrow_root_mut(&mut self) -> RootNodeRefMut<B, Key, Value> {
+        RootNodeRefMut {
+            alloc: self.alloc,
+            height: &mut self.level,
             node: &mut self.node,
         }
     }
@@ -978,6 +1006,22 @@ impl<'a, B, Key, Value> NodeContainer<B, Key, Value> {
         let node = unsafe { ptr::read(&self.node) };
         mem::forget(self);
         node
+    }
+
+    pub(crate) fn _debug_assert_eq(&self, other: &NodeContainer<B, Key, Value>)
+    where
+        B: Debug + Eq,
+        Key: Debug + Eq,
+        Value: Debug + Eq,
+    {
+        assert_eq!(self.alloc, other.alloc);
+        assert_eq!(self.level, other.level);
+        self.borrow()._debug_assert_eq(&other.borrow());
+    }
+
+    pub(crate) fn _debug_assert_min_children(&self) {
+        self.borrow()
+            ._debug_assert_min_children(true, self.alloc.min_children);
     }
 }
 
@@ -1027,6 +1071,14 @@ impl<'a, B, Key, Value> NodeRef<'a, B, Key, Value> {
     /// violated.
     pub(crate) unsafe fn new(node: &'a Node<B, Key, Value>, level: usize) -> Self {
         NodeRef { level, node }
+    }
+
+    pub(crate) fn level(&self) -> usize {
+        self.level
+    }
+
+    pub(crate) fn node(&self) -> &'a Node<B, Key, Value> {
+        self.node
     }
 
     pub(crate) fn children(&self) -> NodeChildrenRef<'a, B, Key, Value> {
@@ -1174,11 +1226,19 @@ where
 }
 
 impl<'a, B, Key, Value> InnerNodeChildrenRef<'a, B, Key, Value> {
-    fn len(&self) -> usize {
+    pub(crate) fn level(&self) -> NonZeroUsize {
+        self.level
+    }
+
+    pub(crate) fn vec(&self) -> &'a FCVec<Node<B, Key, Value>> {
+        self.children
+    }
+
+    pub(crate) fn len(&self) -> usize {
         self.children.len()
     }
 
-    fn iter(&self) -> InnerNodeChildrenIter<'a, B, Key, Value> {
+    pub(crate) fn iter(&self) -> InnerNodeChildrenIter<'a, B, Key, Value> {
         InnerNodeChildrenIter {
             level: self.level,
             children: self.children.iter(),
@@ -1277,14 +1337,25 @@ impl<'a, B, Key, Value> NodeChildrenRef<'a, B, Key, Value> {
     }
 }
 
-struct InnerNodeChildrenRefMut<'a, B, Key, Value> {
+pub(crate) struct InnerNodeChildrenRefMut<'a, B, Key, Value> {
     alloc: Alloc,
     level: NonZeroUsize,
     children: &'a mut FCVec<Node<B, Key, Value>>,
 }
 
 impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
-    fn children_mut(&mut self) -> FCVecRefMut<Node<B, Key, Value>> {
+    pub(crate) fn level(&self) -> NonZeroUsize {
+        self.level
+    }
+
+    pub(crate) fn vec_mut(&mut self) -> FCVecRefMut<Node<B, Key, Value>> {
+        // SAFETY: The level of a child of an inner node is always one less than
+        // the level of the inner node. The children of an inner node are
+        // allocated by the same fc_vec::Alloc as the inner node.
+        unsafe { self.alloc.children.wrap_ref_mut(self.children) }
+    }
+
+    pub(crate) fn into_vec_mut(self) -> FCVecRefMut<'a, Node<B, Key, Value>> {
         // SAFETY: The level of a child of an inner node is always one less than
         // the level of the inner node. The children of an inner node are
         // allocated by the same fc_vec::Alloc as the inner node.
@@ -1308,7 +1379,7 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
         }
         // SAFETY: It is undefined behavior if the children vector has already
         // been dropped.
-        self.children_mut().drop();
+        self.vec_mut().drop();
     }
 
     fn len(&self) -> usize {
@@ -1326,7 +1397,7 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
     }
 
     fn swap_remove(&mut self, index: usize) -> NodeContainer<B, Key, Value> {
-        let child = self.children_mut().swap_remove(index);
+        let child = self.vec_mut().swap_remove(index);
         // SAFETY: The level of a child of an inner node is always one less than
         // the level of the inner node. The children of an inner node are
         // allocated by the same Alloc as the inner node.
@@ -1355,7 +1426,7 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
         if node.level != self.level.get() - 1 {
             panic!("Cannot push a node with the wrong level");
         }
-        self.children_mut()
+        self.vec_mut()
             .try_push(node.leak())
             // SAFETY: The level of a child of an inner node is always one less
             // than the level of the inner node. The children of an inner node
@@ -1380,7 +1451,7 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
         }
         let (new_bounds, sibling_bounds, sibling_children) = splitter.split(
             self.alloc.min_children,
-            self.children_mut(),
+            self.vec_mut(),
             overflow_node.leak(),
         );
         // SAFETY: sibling_children contains children of the same level as
@@ -1402,7 +1473,7 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
     }
 }
 
-struct InnerNodeChildrenIterMut<'a, B, Key, Value> {
+pub(crate) struct InnerNodeChildrenIterMut<'a, B, Key, Value> {
     alloc: Alloc,
     level: NonZeroUsize,
     children: slice::IterMut<'a, Node<B, Key, Value>>,
@@ -1434,7 +1505,7 @@ impl<'a, B, Key, Value> Iterator for InnerNodeChildrenIterMut<'a, B, Key, Value>
     }
 }
 
-enum NodeChildrenRefMut<'a, B, Key, Value> {
+pub(crate) enum NodeChildrenRefMut<'a, B, Key, Value> {
     Inner(InnerNodeChildrenRefMut<'a, B, Key, Value>),
     Leaf(FCVecRefMut<'a, (Key, Value)>),
 }

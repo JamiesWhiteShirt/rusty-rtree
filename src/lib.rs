@@ -22,7 +22,7 @@ use bounds::{Bounded, Bounds, Volume};
 use contains::Contains;
 use filter::{JoinFilter, SpatialFilter};
 use iter::{FilterIter, TreeIter, TreeIterMut};
-use node::{Alloc, Node, NodeRef, NodeRefMut, RootNodeRefMut};
+use node::{Alloc, Node, NodeContainer, NodeRef, NodeRefMut, RootNodeRefMut};
 use ranking::Ranking;
 use select::MinimalVolumeIncreaseSelector;
 use split::QuadraticSplitter;
@@ -54,78 +54,20 @@ pub struct RTreeConfig {
 /// # Safety
 ///
 /// Here be dragons. The R-tree is implemented using unsafe code.
+#[derive(Clone, Debug)]
 pub struct RTree<B, Key, Value> {
-    config: RTreeConfig,
-    height: usize,
-    root: Node<B, Key, Value>,
-}
-
-impl<B, Key, Value> Debug for RTree<B, Key, Value>
-where
-    B: Debug,
-    Key: Debug,
-    Value: Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RTree")
-            .field("config", &self.config)
-            .field("root", &self.node_ref())
-            .finish()
-    }
-}
-
-impl<B, Key, Value> Drop for RTree<B, Key, Value> {
-    fn drop(&mut self) {
-        let ops = self.ops();
-        unsafe {
-            ops.wrap_ref_mut(&mut self.root, self.height).drop();
-        }
-    }
-}
-
-impl<B, Key, Value> Clone for RTree<B, Key, Value>
-where
-    B: Clone,
-    Key: Clone,
-    Value: Clone,
-{
-    fn clone(&self) -> Self {
-        let ops = self.ops();
-        RTree {
-            height: self.height,
-            root: unsafe { ops.clone_node(self.node_ref()) }.leak(),
-            config: self.config,
-        }
-    }
+    root: NodeContainer<B, Key, Value>,
 }
 
 impl<B, Key, Value> RTree<B, Key, Value> {
-    fn ops(&self) -> Alloc {
-        Alloc::new_alloc(self.config.min_children, self.config.max_children)
-    }
-
-    fn root_ref_mut(&mut self) -> RootNodeRefMut<B, Key, Value> {
-        let ops = self.ops();
-        unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) }
-    }
-
-    fn node_ref_mut(&mut self) -> NodeRefMut<B, Key, Value> {
-        let ops = self.ops();
-        unsafe { ops.wrap_ref_mut(&mut self.root, self.height) }
-    }
-
-    fn node_ref(&self) -> NodeRef<B, Key, Value> {
-        unsafe { NodeRef::new(&self.root, self.height) }
-    }
-
     /// Returns an iterator over all entries in the R-tree.
     pub fn iter<'a>(&'a self) -> iter::Iter<Box<TreeIter<'a, B, Key, Value>>> {
-        unsafe { iter::Iter::new(self.height, &self.root) }
+        iter::Iter::new(self.root.borrow())
     }
 
     /// Returns a mutable iterator over all entries in the R-tree.
     pub fn iter_mut<'a>(&'a mut self) -> iter::IterMut<Box<TreeIterMut<'a, B, Key, Value>>> {
-        unsafe { iter::IterMut::new(self.height, &mut self.root) }
+        iter::IterMut::new(self.root.borrow_mut())
     }
 
     /// Returns a new empty R-tree.
@@ -135,9 +77,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
     {
         let ops = Alloc::new_alloc(config.min_children, config.max_children);
         return RTree {
-            height: 0,
-            root: ops.new_leaf().leak(),
-            config,
+            root: ops.new_leaf(),
         };
     }
 
@@ -152,7 +92,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
         Q: ?Sized,
         Filter: SpatialFilter<B, Q>,
     {
-        unsafe { FilterIter::new(self.height, &self.root, filter) }
+        FilterIter::new(self.root.borrow(), filter)
     }
 
     /// Returns a mutable iterator over all entries in the R-tree using a
@@ -166,7 +106,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
         Q: ?Sized,
         Filter: SpatialFilter<B, Q>,
     {
-        unsafe { iter::FilterIterMut::new(self.height, &mut self.root, filter) }
+        iter::FilterIterMut::new(self.root.borrow_mut(), filter)
     }
 
     /// Returns an entry with a minimal key according to the given [`Ranking`].
@@ -233,7 +173,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
     where
         R: Ranking<B, Key>,
     {
-        unsafe { iter::SortedIter::new(self.height, &self.root, ranking) }
+        iter::SortedIter::new(self.root.borrow(), ranking)
     }
 
     /// Returns a mutable iterator over the entries in the R-tree in _ascending
@@ -244,7 +184,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
     where
         R: Ranking<B, Key>,
     {
-        unsafe { iter::SortedIterMut::new(self.height, &mut self.root, ranking) }
+        iter::SortedIterMut::new(self.root.borrow_mut(), ranking)
     }
 
     /// Returns an iterator over the entries in the R-tree in _ascending key
@@ -265,7 +205,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
         R: Ranking<B, Key, Metric = Option<S>>,
         S: Ord,
     {
-        unsafe { iter::FilterSortedIter::new(self.height, &self.root, ranking) }
+        iter::FilterSortedIter::new(self.root.borrow(), ranking)
     }
 
     /// Returns a mutable iterator over the entries in the R-tree in _ascending
@@ -286,7 +226,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
         R: Ranking<B, Key, Metric = Option<S>>,
         S: Ord,
     {
-        unsafe { iter::FilterSortedIterMut::new(self.height, &mut self.root, ranking) }
+        iter::FilterSortedIterMut::new(self.root.borrow_mut(), ranking)
     }
 
     pub fn join<'a, 'b, B1, Key1, Value1, Q0, Q1, F>(
@@ -302,7 +242,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
         Key1: Bounded<B1> + Eq,
         F: JoinFilter<B, B1, Q0, Q1>,
     {
-        unsafe { join::JoinIter::new(filter, &self.root, self.height, &other.root, other.height) }
+        join::JoinIter::new(self.root.borrow(), other.root.borrow(), filter)
     }
 
     pub fn left_join<'a, 'b, B1, Key1, Value1, Q0, Q1, F>(
@@ -318,9 +258,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
         Key1: Bounded<B1> + Eq,
         F: JoinFilter<B, B1, Q0, Q1>,
     {
-        unsafe {
-            left_join::LeftJoinIter::new(filter, &self.root, self.height, &other.root, other.height)
-        }
+        left_join::LeftJoinIter::new(self.root.borrow(), other.root.borrow(), filter)
     }
 
     /// Returns a reference to the value associated with the given key, or `None`
@@ -336,7 +274,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
         Key: Borrow<Q>,
         Q: Eq + Bounded<B> + ?Sized,
     {
-        self.node_ref().get(key)
+        self.root.borrow().get(key)
     }
 
     /// Returns a mutable reference to the value associated with the given key,
@@ -352,12 +290,12 @@ impl<B, Key, Value> RTree<B, Key, Value> {
         Key: Borrow<Q>,
         Q: Eq + Bounded<B> + ?Sized,
     {
-        self.node_ref_mut().into_get_mut(key)
+        self.root.borrow_mut().into_get_mut(key)
     }
 
     /// Returns the number of entries in the R-tree.
     pub fn len(&self) -> usize {
-        self.node_ref().len()
+        self.root.borrow().len()
     }
 
     fn _debug_assert_bvh(&self)
@@ -365,7 +303,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
         B: Debug + Bounds + Eq,
         Key: Bounded<B>,
     {
-        self.node_ref()._debug_assert_bvh();
+        self.root.borrow()._debug_assert_bvh();
     }
 
     fn _debug_assert_eq(a: &Self, b: &Self)
@@ -374,17 +312,14 @@ impl<B, Key, Value> RTree<B, Key, Value> {
         Key: Debug + Eq,
         Value: Debug + Eq,
     {
-        assert_eq!(a.config, b.config);
-        assert_eq!(a.height, b.height);
-        a.node_ref()._debug_assert_eq(&b.node_ref());
+        a.root._debug_assert_eq(&b.root)
     }
 
     fn _debug_assert_min_children(&self)
     where
         B: Debug,
     {
-        self.node_ref()
-            ._debug_assert_min_children(true, self.config.min_children);
+        self.root._debug_assert_min_children();
     }
 }
 
@@ -396,9 +331,7 @@ where
     // Inserts a new key-value pair into the R-tree, ignoring any existing
     // entries with the same key.
     pub fn insert(&mut self, key: Key, value: Value) {
-        let ops = self.ops();
-        let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
-        root.insert(
+        self.root.borrow_root_mut().insert(
             &mut MinimalVolumeIncreaseSelector,
             &mut QuadraticSplitter,
             key,
@@ -411,9 +344,7 @@ where
     /// multiple entries with the same key exist, the value of the first entry
     /// will be replaced.
     pub fn insert_unique(&mut self, key: Key, value: Value) -> Option<Value> {
-        let ops = self.ops();
-        let mut root = unsafe { ops.wrap_root_ref_mut(&mut self.root, &mut self.height) };
-        root.insert_unique(
+        self.root.borrow_root_mut().insert_unique(
             &mut MinimalVolumeIncreaseSelector,
             &mut QuadraticSplitter,
             key,
@@ -433,7 +364,7 @@ where
         Key: Borrow<Q>,
         Q: Eq + Bounded<B> + ?Sized,
     {
-        self.root_ref_mut().remove(
+        self.root.borrow_root_mut().remove(
             &mut MinimalVolumeIncreaseSelector,
             &mut QuadraticSplitter,
             key,

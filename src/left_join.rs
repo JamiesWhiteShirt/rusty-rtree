@@ -6,7 +6,7 @@ use crate::{
     filter::{JoinFilter, JoiningFilter},
     iter::{FilterIter, TreeIter},
     iter_stack::{InnerIterStack, IterStack, MaybeUninitIterStack},
-    node::Node,
+    node::{Node, NodeRef},
     rc_mut::{self, RcMutAlloc},
     util::empty_slice,
 };
@@ -105,28 +105,31 @@ where
     QL: ?Sized,
     QR: ?Sized,
 {
-    pub(crate) unsafe fn new(
+    pub(crate) fn new(
+        root_left: NodeRef<'l, BL, KeyL, ValueL>,
+        root_right: NodeRef<'r, BR, KeyR, ValueR>,
         filter: Filter,
-        root_left: &'l Node<BL, KeyL, ValueL>,
-        height_left: usize,
-        root_right: &'r Node<BR, KeyR, ValueR>,
-        height_right: usize,
     ) -> Self {
         let mut left = IterStack::new_box(
             empty_slice().iter(),
-            (0..height_left + 1).map(|_| empty_slice().iter()),
+            (0..root_left.level() + 1).map(|_| empty_slice().iter()),
         );
-        left[NonZeroUsize::new(height_left + 1).unwrap()] = slice::from_ref(root_left).iter();
+        left[NonZeroUsize::new(root_left.level() + 1).unwrap()] =
+            slice::from_ref(root_left.node()).iter();
 
         let mut right = IterStack::new_box(
             RewindableIter::new(empty_slice()),
-            (0..height_right + 1).map(|_| RewindableIter::new(empty_slice())),
+            (0..root_right.level() + 1).map(|_| RewindableIter::new(empty_slice())),
         );
-        right[NonZeroUsize::new(height_right + 1).unwrap()] =
-            RewindableIter::new(slice::from_ref(root_right));
+        right[NonZeroUsize::new(root_right.level() + 1).unwrap()] =
+            RewindableIter::new(slice::from_ref(root_right.node()));
 
-        let right_alloc =
-            RcMutAlloc::new_for_value_raw(IterStack::from_raw_parts(ptr::null(), height_right + 2));
+        let right_alloc = unsafe {
+            RcMutAlloc::new_for_value_raw(IterStack::from_raw_parts(
+                ptr::null(),
+                root_right.level() + 2,
+            ))
+        };
 
         Self {
             left,

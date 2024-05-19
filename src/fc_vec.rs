@@ -114,7 +114,7 @@ impl<'a, T> IntoIterator for &'a mut FCVec<T> {
 ///
 /// Operations are only safe on a given [FCVec<T>] if it was created by this
 /// [Alloc] with [Alloc::new].
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Alloc {
     cap: usize,
 }
@@ -200,6 +200,10 @@ impl<'a, T> FCVecRefMut<'a, T> {
     }
 
     pub(crate) fn iter_mut(&mut self) -> IterMut<T> {
+        self.data.iter_mut()
+    }
+
+    pub(crate) fn into_iter_mut(self) -> IterMut<'a, T> {
         self.data.iter_mut()
     }
 

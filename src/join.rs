@@ -1,6 +1,11 @@
 use std::{borrow::Borrow, cmp, marker::PhantomData, num::NonZeroUsize, slice};
 
-use crate::{filter::JoinFilter, iter_stack::IterStack, node::Node, util::empty_slice};
+use crate::{
+    filter::JoinFilter,
+    iter_stack::IterStack,
+    node::{Node, NodeChildrenRef, NodeRef},
+    util::empty_slice,
+};
 
 struct RewindableIter<'a, T> {
     slice: &'a [T],
@@ -91,50 +96,38 @@ where
     /// children of the inner node with the leaf node.
     ///
     /// The iterator is added to the stack at the greater of the two levels.
-    ///
-    /// # Safety
-    ///
-    /// The levels must be valid for the given nodes.
-    unsafe fn start_join(
+    fn start_join(
         &mut self,
-        node0: &'a Node<B0, Key0, Value0>,
-        level0: usize,
-        node1: &'b Node<B1, Key1, Value1>,
-        level1: usize,
+        node0: NodeRef<'a, B0, Key0, Value0>,
+        node1: NodeRef<'b, B1, Key1, Value1>,
     ) {
-        if let Some(height) = NonZeroUsize::new(cmp::max(level0, level1)) {
-            self.stack[height] = ProductIter::new(
-                if level0 > 0 {
-                    // SAFETY: The level is greater than 0, so the node must be an inner node.
-                    unsafe { node0.inner_children() }
-                } else {
-                    slice::from_ref(node0)
-                },
-                if level1 > 0 {
-                    // SAFETY: The level is greater than 0, so the node must be an inner node.
-                    unsafe { node1.inner_children() }
-                } else {
-                    slice::from_ref(node1)
-                },
-            );
-        } else {
-            // SAFETY: The level of both nodes is zero, so the nodes must be leaf nodes.
-            *self.stack.leaf_mut() =
-                unsafe { ProductIter::new(node0.leaf_children(), node1.leaf_children()) };
+        match (node0.children(), node1.children()) {
+            (NodeChildrenRef::Leaf(vec0), NodeChildrenRef::Leaf(vec1)) => {
+                *self.stack.leaf_mut() = ProductIter::new(vec0, vec1);
+            }
+            (children0, children1) => {
+                // height cannot be zero because either node is an inner node
+                let height = NonZeroUsize::new(cmp::max(node0.level(), node1.level())).unwrap();
+                self.stack[height] = ProductIter::new(
+                    match children0 {
+                        NodeChildrenRef::Inner(children) => children.vec(),
+                        NodeChildrenRef::Leaf(_) => slice::from_ref(node0.node()),
+                    },
+                    match children1 {
+                        NodeChildrenRef::Inner(children) => children.vec(),
+                        NodeChildrenRef::Leaf(_) => slice::from_ref(node1.node()),
+                    },
+                )
+            }
         }
     }
 
-    /// # Safety
-    ///
-    /// The levels must be valid for the given nodes.
-    pub(crate) unsafe fn new(
+    pub(crate) fn new(
+        root0: NodeRef<'a, B0, Key0, Value0>,
+        root1: NodeRef<'b, B1, Key1, Value1>,
         filter: Filter,
-        root0: &'a Node<B0, Key0, Value0>,
-        height0: usize,
-        root1: &'b Node<B1, Key1, Value1>,
-        height1: usize,
     ) -> Self {
-        if !filter.test_bounds(&root0.bounds, &root1.bounds) {
+        if !filter.test_bounds(&root0.node().bounds, &root1.node().bounds) {
             return Self {
                 stack: IterStack::empty_box(),
                 padding0: 0,
@@ -144,21 +137,18 @@ where
             };
         }
 
-        let height = cmp::max(height0, height1);
+        let height = cmp::max(root0.level(), root1.level());
         let mut iter = JoinIter {
             stack: IterStack::new_box(
                 ProductIter::new(empty_slice(), empty_slice()),
                 (0..height).map(|_| ProductIter::new(empty_slice(), empty_slice())),
             ),
-            padding0: height - height0,
-            padding1: height - height1,
+            padding0: height - root0.level(),
+            padding1: height - root1.level(),
             filter,
             _phantom: PhantomData,
         };
-        // SAFETY: The levels are valid for the given nodes.
-        unsafe {
-            iter.start_join(root0, height0, root1, height1);
-        }
+        iter.start_join(root0, root1);
 
         iter
     }
@@ -196,10 +186,8 @@ where
                     level -= 1;
                     unsafe {
                         self.start_join(
-                            node0,
-                            level.saturating_sub(self.padding0),
-                            node1,
-                            level.saturating_sub(self.padding1),
+                            NodeRef::new(node0, level.saturating_sub(self.padding0)),
+                            NodeRef::new(node1, level.saturating_sub(self.padding1)),
                         );
                     }
                 } else {

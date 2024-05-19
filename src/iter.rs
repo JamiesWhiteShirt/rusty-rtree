@@ -11,7 +11,7 @@ use std::{
 use crate::{
     filter::{NoFilter, SpatialFilter},
     iter_stack::IterStack,
-    node::Node,
+    node::{Node, NodeChildrenRef, NodeChildrenRefMut, NodeRef, NodeRefMut},
     ranking::Ranking,
     util::empty_slice,
 };
@@ -40,19 +40,22 @@ impl<'a, B, Key, Value> Iter<Box<TreeIter<'a, B, Key, Value>>> {
         }
     }
 
-    pub(crate) unsafe fn new(height: usize, root: &'a Node<B, Key, Value>) -> Self {
+    pub(crate) fn new(root: NodeRef<'a, B, Key, Value>) -> Self {
         // Initialize the stack with empty iterators for each level of the tree
         // except the root. In the first iteration, all iterators but the root
         // will act as if they are exhausted, so the stack will be initialized
         // with true iterators starting from the root.
         let mut stack = IterStack::new_box(
             empty_slice().iter(),
-            (0..height).map(|_| empty_slice().iter()),
+            (0..root.level()).map(|_| empty_slice().iter()),
         );
-        if let Some(height) = NonZeroUsize::new(height) {
-            stack[height] = root.inner_children().iter();
-        } else {
-            *stack.leaf_mut() = root.leaf_children().iter();
+        match root.children() {
+            NodeChildrenRef::Inner(children) => {
+                stack[children.level()] = children.vec().iter();
+            }
+            NodeChildrenRef::Leaf(children) => {
+                *stack.leaf_mut() = children.iter();
+            }
         }
         Self { stack }
     }
@@ -128,10 +131,10 @@ where
     Q: ?Sized,
     F: SpatialFilter<B, Q>,
 {
-    pub(crate) unsafe fn new(height: usize, root: &'a Node<B, Key, Value>, filter: F) -> Self {
+    pub(crate) fn new(root: NodeRef<'a, B, Key, Value>, filter: F) -> Self {
         Self {
-            iter: if filter.test_bounds(&root.borrow().bounds) {
-                Iter::new(height, root)
+            iter: if filter.test_bounds(&root.node().bounds) {
+                Iter::new(root)
             } else {
                 Iter::new_empty()
             },
@@ -185,19 +188,23 @@ impl<'a, B, Key, Value> IterMut<Box<TreeIterMut<'a, B, Key, Value>>> {
         }
     }
 
-    pub(crate) unsafe fn new(height: usize, root: &'a mut Node<B, Key, Value>) -> Self {
+    pub(crate) fn new(root: NodeRefMut<'a, B, Key, Value>) -> Self {
         // Initialize the stack with empty iterators for each level of the tree
         // except the root. In the first iteration, all iterators but the root
         // will act as if they are exhausted, so the stack will be initialized
         // with true iterators starting from the root.
         let mut stack = IterStack::new_box(
             empty_slice().iter_mut(),
-            (0..height).map(|_| empty_slice().iter_mut()),
+            (0..root.level()).map(|_| empty_slice().iter_mut()),
         );
-        if let Some(height) = NonZeroUsize::new(height) {
-            stack[height] = root.inner_children_mut().iter_mut();
-        } else {
-            *stack.leaf_mut() = root.leaf_children_mut().iter_mut();
+        match root.into_children_mut() {
+            NodeChildrenRefMut::Inner(children) => {
+                let level = children.level();
+                stack[level] = children.into_vec_mut().into_iter_mut();
+            }
+            NodeChildrenRefMut::Leaf(children) => {
+                *stack.leaf_mut() = children.into_iter_mut();
+            }
         }
         Self { stack }
     }
@@ -273,10 +280,10 @@ where
     Q: ?Sized,
     F: SpatialFilter<B, Q>,
 {
-    pub(crate) unsafe fn new(height: usize, root: &'a mut Node<B, Key, Value>, filter: F) -> Self {
+    pub(crate) fn new(root: NodeRefMut<'a, B, Key, Value>, filter: F) -> Self {
         Self {
-            iter: if filter.test_bounds(&root.bounds) {
-                IterMut::new(height, root)
+            iter: if filter.test_bounds(&root.node().bounds) {
+                IterMut::new(root)
             } else {
                 IterMut::new_empty()
             },
@@ -354,11 +361,11 @@ impl<'a, B, Key, Value, R> SortedIter<'a, B, Key, Value, R>
 where
     R: Ranking<B, Key>,
 {
-    pub(crate) unsafe fn new(height: usize, root: &'a Node<B, Key, Value>, ranking: R) -> Self {
+    pub(crate) fn new(root: NodeRef<'a, B, Key, Value>, ranking: R) -> Self {
         let mut entries = BinaryHeap::new();
         entries.push(Ranked {
-            score: Reverse((ranking.bounds_min(&root.bounds), height + 1)),
-            value: SortedIterItem { node: root },
+            score: Reverse((ranking.bounds_min(&root.node().bounds), root.level() + 1)),
+            value: SortedIterItem { node: root.node() },
         });
         SortedIter {
             ranking,
@@ -426,11 +433,13 @@ impl<'a, B, Key, Value, R> SortedIterMut<'a, B, Key, Value, R>
 where
     R: Ranking<B, Key>,
 {
-    pub(crate) unsafe fn new(height: usize, root: &'a mut Node<B, Key, Value>, ranking: R) -> Self {
+    pub(crate) fn new(root: NodeRefMut<'a, B, Key, Value>, ranking: R) -> Self {
         let mut entries = BinaryHeap::new();
         entries.push(Ranked {
-            score: Reverse((ranking.bounds_min(&root.bounds), height + 1)),
-            value: SortedIterItemMut { node: root },
+            score: Reverse((ranking.bounds_min(&root.node().bounds), root.level() + 1)),
+            value: SortedIterItemMut {
+                node: root.into_node(),
+            },
         });
         SortedIterMut {
             ranking,
@@ -495,12 +504,12 @@ where
     R: Ranking<B, Key, Metric = Option<S>>,
     S: Ord,
 {
-    pub(crate) unsafe fn new(height: usize, root: &'a Node<B, Key, Value>, ranking: R) -> Self {
+    pub(crate) fn new(root: NodeRef<'a, B, Key, Value>, ranking: R) -> Self {
         let mut entries = BinaryHeap::new();
-        if let Some(score) = ranking.bounds_min(&root.bounds) {
+        if let Some(score) = ranking.bounds_min(&root.node().bounds) {
             entries.push(Ranked {
-                score: Reverse((score, height + 1)),
-                value: SortedIterItem { node: root },
+                score: Reverse((score, root.level() + 1)),
+                value: SortedIterItem { node: root.node() },
             });
         }
         Self {
@@ -571,12 +580,14 @@ where
     R: Ranking<B, Key, Metric = Option<S>>,
     S: Ord,
 {
-    pub(crate) unsafe fn new(height: usize, root: &'a mut Node<B, Key, Value>, ranking: R) -> Self {
+    pub(crate) fn new(root: NodeRefMut<'a, B, Key, Value>, ranking: R) -> Self {
         let mut entries = BinaryHeap::new();
-        if let Some(score) = ranking.bounds_min(&root.bounds) {
+        if let Some(score) = ranking.bounds_min(&root.node().bounds) {
             entries.push(Ranked {
-                score: Reverse((score, height + 1)),
-                value: SortedIterItemMut { node: root },
+                score: Reverse((score, root.level() + 1)),
+                value: SortedIterItemMut {
+                    node: root.into_node(),
+                },
             });
         }
         Self {
