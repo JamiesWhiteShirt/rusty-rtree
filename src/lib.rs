@@ -22,7 +22,7 @@ use bounds::{Bounded, Bounds, Volume};
 use contains::Contains;
 use filter::{JoinFilter, SpatialFilter};
 use iter::{FilterIter, TreeIter, TreeIterMut};
-use node::{Alloc, Node, NodeContainer, NodeRef, NodeRefMut, RootNodeRefMut};
+use node::{Alloc, NodeContainer};
 use ranking::Ranking;
 use select::MinimalVolumeIncreaseSelector;
 use split::QuadraticSplitter;
@@ -331,7 +331,7 @@ where
     // Inserts a new key-value pair into the R-tree, ignoring any existing
     // entries with the same key.
     pub fn insert(&mut self, key: Key, value: Value) {
-        self.root.borrow_root_mut().insert(
+        self.root.insert(
             &mut MinimalVolumeIncreaseSelector,
             &mut QuadraticSplitter,
             key,
@@ -344,7 +344,7 @@ where
     /// multiple entries with the same key exist, the value of the first entry
     /// will be replaced.
     pub fn insert_unique(&mut self, key: Key, value: Value) -> Option<Value> {
-        self.root.borrow_root_mut().insert_unique(
+        self.root.insert_unique(
             &mut MinimalVolumeIncreaseSelector,
             &mut QuadraticSplitter,
             key,
@@ -364,7 +364,7 @@ where
         Key: Borrow<Q>,
         Q: Eq + Bounded<B> + ?Sized,
     {
-        self.root.borrow_root_mut().remove(
+        self.root.remove(
             &mut MinimalVolumeIncreaseSelector,
             &mut QuadraticSplitter,
             key,

@@ -261,39 +261,6 @@ impl Alloc {
         }
     }
 
-    /// Mutably borrows the root node and height of a tree in a safe reference.
-    /// This is a special case of `wrap_ref_mut` that can be used for operations
-    /// that can change the height of the tree. The provided `node` must have
-    /// been allocated by the same Alloc and must not have been dropped.
-    ///
-    /// The provided height is equal to the level of the root node. If the
-    /// returned reference is used for operations that can change the height of
-    /// the tree, the provided `height` is updated to match the new height, and
-    /// the root node is modified such that its implicit level matches the new
-    /// height.
-    ///
-    /// # Safety
-    ///
-    /// The provided `height` must match the implicit height of the tree rooted
-    /// at `node`. It is undefined behavior to use the returned reference if
-    /// this condition is violated.
-    ///
-    /// The return value must not be used if this is called with a node that has
-    /// been allocated by a different Alloc. It is undefined behavior to do so
-    /// if the Allocs have different `max_children` values, and it is a logic
-    /// error to do so if the Allocs have different `min_children` values.
-    pub(crate) unsafe fn wrap_root_ref_mut<'a, B, Key, Value>(
-        &self,
-        node: &'a mut Node<B, Key, Value>,
-        height: &'a mut usize,
-    ) -> RootNodeRefMut<'a, B, Key, Value> {
-        RootNodeRefMut {
-            alloc: *self,
-            height,
-            node,
-        }
-    }
-
     /// Wraps the children of a node at a specified level in a safe container
     /// that takes ownership of the children, which will drop the children
     /// when dropped. The provided `children` must have been allocated by the
@@ -742,25 +709,13 @@ where
     }
 }
 
-impl<'a, B, Key, Value> From<&'a mut RootNodeRefMut<'_, B, Key, Value>>
-    for NodeRefMut<'a, B, Key, Value>
-{
-    fn from(root: &'a mut RootNodeRefMut<'_, B, Key, Value>) -> Self {
-        NodeRefMut {
-            alloc: root.alloc,
-            level: *root.height,
-            node: root.node,
-        }
-    }
-}
-
-pub(crate) struct RootNodeRefMut<'a, B, Key, Value> {
+pub(crate) struct NodeContainer<B, Key, Value> {
     alloc: Alloc,
-    height: &'a mut usize,
-    node: &'a mut Node<B, Key, Value>,
+    level: usize,
+    node: Node<B, Key, Value>,
 }
 
-impl<'a, B, Key, Value> RootNodeRefMut<'a, B, Key, Value>
+impl<B, Key, Value> NodeContainer<B, Key, Value>
 where
     B: Bounds + Clone,
     Key: Bounded<B>,
@@ -771,7 +726,7 @@ where
         splitter: &mut impl Splitter<B>,
         entry: NodeEntry<B, Key, Value>,
     ) {
-        if let Some(sibling) = self.node_ref_mut().insert(selector, splitter, entry) {
+        if let Some(sibling) = self.borrow_mut().insert(selector, splitter, entry) {
             self.branch(sibling);
         }
     }
@@ -797,7 +752,7 @@ where
         Key: Eq,
     {
         let (prev_value, sibling) = self
-            .node_ref_mut()
+            .borrow_mut()
             .insert_unique(selector, splitter, key, value);
         if let Some(sibling) = sibling {
             self.branch(sibling);
@@ -806,7 +761,7 @@ where
     }
 
     pub(crate) fn remove<Q>(
-        &'a mut self,
+        &mut self,
         selector: &mut impl Selector<B>,
         splitter: &mut impl Splitter<B>,
         key: &Q,
@@ -816,8 +771,8 @@ where
         Q: Bounded<B> + Eq + ?Sized,
     {
         let mut reinsert_entries: Box<[Option<NodeChildren<B, Key, Value>>]> =
-            std::iter::repeat_with(|| None).take(*self.height).collect();
-        if let Some(value) = self.node_ref_mut().remove(key, &mut |children| {
+            std::iter::repeat_with(|| None).take(self.level).collect();
+        if let Some(value) = self.borrow_mut().remove(key, &mut |children| {
             let level = children.level();
             reinsert_entries[level] = Some(children.leak());
         }) {
@@ -853,15 +808,15 @@ where
     }
 }
 
-impl<'a, B, Key, Value> RootNodeRefMut<'a, B, Key, Value> {
+impl<B, Key, Value> NodeContainer<B, Key, Value> {
     fn branch(&mut self, sibling: NodeContainer<B, Key, Value>)
     where
         B: Bounds,
     {
-        if sibling.level != *self.height {
+        if sibling.level != self.level {
             panic!(
                 "cannot branch with sibling of level {} when root node has level {}",
-                sibling.level, *self.height
+                sibling.level, self.level
             )
         }
 
@@ -877,32 +832,24 @@ impl<'a, B, Key, Value> RootNodeRefMut<'a, B, Key, Value> {
         // former root node, so the level of the new root node is the same as
         // the level of the former root node plus one.
         unsafe {
-            next_root_children.push(ptr::read(self.node));
+            next_root_children.push(ptr::read(&self.node));
             next_root_children.push(sibling.leak());
             ptr::write(
-                self.node,
+                &mut self.node,
                 Node::new(
                     bounds,
                     NodeChildren {
                         inner: ManuallyDrop::new(next_root_children.leak()),
                     },
-                    *self.height + 1,
+                    self.level + 1,
                 ),
             );
         }
-        *self.height += 1;
-    }
-
-    fn node_ref_mut<'b>(&'b mut self) -> NodeRefMut<'b, B, Key, Value> {
-        NodeRefMut {
-            alloc: self.alloc,
-            level: *self.height,
-            node: self.node,
-        }
+        self.level += 1;
     }
 
     fn try_unbranch(&mut self) {
-        let new_root = match self.node_ref_mut().children_mut() {
+        let new_root = match self.borrow_mut().children_mut() {
             NodeChildrenRefMut::Inner(mut children) => {
                 if children.len() == 1 {
                     Some(children.swap_remove(0))
@@ -916,34 +863,10 @@ impl<'a, B, Key, Value> RootNodeRefMut<'a, B, Key, Value> {
             }
         };
         if let Some(new_root) = new_root {
-            // SAFETY: The former root is replaced immediately after the former
-            // root is dropped, so the former root is not used after being
-            // dropped.
-            unsafe {
-                self.node_ref_mut().drop();
-            }
-            *self.node = new_root.leak();
-            *self.height -= 1;
+            *self = new_root;
         }
     }
-}
 
-impl<B, Key, Value> Bounded<B> for RootNodeRefMut<'_, B, Key, Value>
-where
-    B: Clone,
-{
-    fn bounds(&self) -> B {
-        self.node.bounds()
-    }
-}
-
-pub(crate) struct NodeContainer<B, Key, Value> {
-    alloc: Alloc,
-    level: usize,
-    node: Node<B, Key, Value>,
-}
-
-impl<'a, B, Key, Value> NodeContainer<B, Key, Value> {
     pub(crate) fn borrow(&self) -> NodeRef<B, Key, Value> {
         NodeRef {
             level: self.level,
@@ -955,14 +878,6 @@ impl<'a, B, Key, Value> NodeContainer<B, Key, Value> {
         NodeRefMut {
             alloc: self.alloc,
             level: self.level,
-            node: &mut self.node,
-        }
-    }
-
-    pub(crate) fn borrow_root_mut(&mut self) -> RootNodeRefMut<B, Key, Value> {
-        RootNodeRefMut {
-            alloc: self.alloc,
-            height: &mut self.level,
             node: &mut self.node,
         }
     }
