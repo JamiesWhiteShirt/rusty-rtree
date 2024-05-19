@@ -89,16 +89,12 @@ impl<B, Key, Value> Node<B, Key, Value> {
     ///
     /// # Safety
     ///
-    /// `_level` describes the implicit level of the node. Though it is not
-    /// used to produce the node, it is provided as a parameter for debugging
-    /// purposes. It is the caller's responsibility to ensure that same level is
-    /// provided for operations on the node that depend on the level.
-    ///
-    /// `children` must be set appropriately based on `_level`. If `_level` = 0,
-    /// `children` must be leaf children. If `_level` > 0, `children` must be
-    /// inner children containing nodes whose level is `_level - 1`. It is
-    /// undefined behavior to violate these conditions.
-    unsafe fn new(bounds: B, children: NodeChildren<B, Key, Value>, _level: usize) -> Self {
+    /// `children` must be set appropriately based on the implicit level of the
+    /// node. If the level is 0, `children` must be leaf children. If the level
+    /// is greater than 0, `children` must be inner children containing nodes
+    /// whose level is `level - 1`. It is undefined behavior to violate these
+    /// conditions.
+    unsafe fn new(bounds: B, children: NodeChildren<B, Key, Value>) -> Self {
         Node { bounds, children }
     }
 
@@ -202,7 +198,6 @@ impl Alloc {
                     NodeChildren {
                         leaf: ManuallyDrop::new(self.children.new().leak()),
                     },
-                    0,
                 ),
                 0,
             )
@@ -309,7 +304,7 @@ impl Alloc {
         // SAFETY: `children` contains the same children as `self`, so the
         // level of the children is the same as the level of `self`. The clones
         // are allocated by the same fc_vec::Alloc as `self`.
-        unsafe { self.wrap(Node::new(bounds, children.leak(), node.level), node.level) }
+        unsafe { self.wrap(Node::new(bounds, children.leak()), node.level) }
     }
 
     unsafe fn clone_children<B, Key, Value>(
@@ -394,7 +389,6 @@ where
                                 NodeChildren {
                                     leaf: ManuallyDrop::new(sibling_children.leak()),
                                 },
-                                self.level,
                             ),
                             self.level,
                         )
@@ -841,7 +835,6 @@ impl<B, Key, Value> NodeContainer<B, Key, Value> {
                     NodeChildren {
                         inner: ManuallyDrop::new(next_root_children.leak()),
                     },
-                    self.level + 1,
                 ),
             );
         }
@@ -1380,7 +1373,6 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
                     NodeChildren {
                         inner: ManuallyDrop::new(sibling_children.leak()),
                     },
-                    self.level.get(),
                 ),
                 self.level.get(),
             )
