@@ -1,6 +1,4 @@
-use std::{cmp, ops::Sub};
-
-use array_init::from_iter;
+use std::{array, cmp, ops::Sub};
 
 use crate::{
     bounds::{Bounded, AABB, SAABB},
@@ -16,22 +14,12 @@ where
     N: Ord + Clone + num_traits::Bounded,
 {
     fn bounds(&self) -> SAABB<N, D> {
-        let min = SVec(
-            from_iter(
-                self.0
-                    .zip(&self.1)
-                    .map(|(start, end)| cmp::min(start, end).clone()),
-            )
-            .unwrap(),
-        );
-        let max = SVec(
-            from_iter(
-                self.0
-                    .zip(&self.1)
-                    .map(|(start, end)| cmp::max(start, end).clone()),
-            )
-            .unwrap(),
-        );
+        let min = SVec(array::from_fn(|i| {
+            cmp::min(self.0[i].clone(), self.1[i].clone())
+        }));
+        let max = SVec(array::from_fn(|i| {
+            cmp::max(self.0[i].clone(), self.1[i].clone())
+        }));
         AABB { min, max }
     }
 }
