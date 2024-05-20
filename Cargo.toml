@@ -11,5 +11,10 @@ noisy_float = "0.2.0"
 num-traits = "0.2.15"
 
 [dev-dependencies]
+criterion = "0.5.1"
 csv = "1.2.1"
 rand = "0.8.5"
+
+[[bench]]
+name = "rtree"
+harness = false

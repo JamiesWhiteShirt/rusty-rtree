@@ -1,4 +1,4 @@
-#![feature(test, ptr_metadata, layout_for_ptr)]
+#![feature(ptr_metadata, layout_for_ptr)]
 
 pub mod bounds;
 pub mod contains;
@@ -399,6 +399,11 @@ where
 #[cfg(test)]
 mod tests {
     use core::fmt;
+    use noisy_float::types::n64;
+    use noisy_float::types::N64;
+    use rand::rngs::StdRng;
+    use rand::Rng;
+    use rand::SeedableRng;
     use std::cell::RefCell;
     use std::collections::HashSet;
     use std::error::Error;
@@ -406,13 +411,6 @@ mod tests {
     use std::ops::Add;
     use std::ops::Mul;
     use std::ops::Sub;
-    extern crate test;
-    use noisy_float::types::n64;
-    use noisy_float::types::N64;
-    use rand::rngs::StdRng;
-    use rand::Rng;
-    use rand::SeedableRng;
-    use test::{black_box, Bencher};
 
     use noisy_float::types::n32;
     use noisy_float::types::N32;
@@ -624,141 +622,6 @@ mod tests {
         }
 
         assert!(tree.len() == 0);
-    }
-
-    fn do_insert_bench(bencher: &mut Bencher, max_children: usize) {
-        let min_children = max_children / 4;
-        let mut rng = StdRng::from_seed([
-            0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD,
-            0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
-            0xDE, 0xAD, 0xBE, 0xEF,
-        ]);
-
-        let mut tree = RTree::<SAABB<i32, 2>, SAABB<i32, 2>, i32>::new(RTreeConfig {
-            max_children,
-            min_children,
-        });
-        for i in 0..10000 {
-            let min = SVec([rng.gen_range(0..991), rng.gen_range(0..991)]);
-            let max = min + SVec([rng.gen_range(1..11), rng.gen_range(1..11)]);
-            tree.insert(SAABB { min, max }, i);
-        }
-
-        bencher.iter(|| {
-            let min = SVec([rng.gen_range(0..991), rng.gen_range(0..991)]);
-            let max = min + SVec([10, 10]);
-            tree.insert(SAABB { min, max }, 0)
-        });
-    }
-
-    #[bench]
-    #[cfg_attr(miri, ignore)]
-    fn insert_bench_4(bencher: &mut Bencher) {
-        do_insert_bench(bencher, 4);
-    }
-
-    #[bench]
-    #[cfg_attr(miri, ignore)]
-    fn insert_bench_8(bencher: &mut Bencher) {
-        do_insert_bench(bencher, 8);
-    }
-
-    #[bench]
-    #[cfg_attr(miri, ignore)]
-    fn insert_bench_16(bencher: &mut Bencher) {
-        do_insert_bench(bencher, 16);
-    }
-
-    #[bench]
-    #[cfg_attr(miri, ignore)]
-    fn insert_bench_32(bencher: &mut Bencher) {
-        do_insert_bench(bencher, 32);
-    }
-
-    #[bench]
-    #[cfg_attr(miri, ignore)]
-    fn insert_bench_64(bencher: &mut Bencher) {
-        do_insert_bench(bencher, 64);
-    }
-
-    #[bench]
-    #[cfg_attr(miri, ignore)]
-    fn insert_bench_128(bencher: &mut Bencher) {
-        do_insert_bench(bencher, 128);
-    }
-
-    #[bench]
-    #[cfg_attr(miri, ignore)]
-    fn insert_bench_256(bencher: &mut Bencher) {
-        do_insert_bench(bencher, 256);
-    }
-
-    fn do_query_bench(bencher: &mut Bencher, max_children: usize) {
-        let mut rng = StdRng::from_seed([
-            0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD,
-            0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF,
-            0xDE, 0xAD, 0xBE, 0xEF,
-        ]);
-        let mut tree = RTree::<SAABB<i32, 2>, SAABB<i32, 2>, i32>::new(RTreeConfig {
-            max_children,
-            min_children: max_children / 2,
-        });
-        for i in 0..10000 {
-            let min = SVec([rng.gen_range(0..991), rng.gen_range(0..991)]);
-            let max = min + SVec([rng.gen_range(1..11), rng.gen_range(1..11)]);
-            tree.insert(SAABB { min, max }, i);
-        }
-
-        bencher.iter(|| {
-            let min = SVec([rng.gen_range(0..991), rng.gen_range(0..991)]);
-            let max = min + SVec([10, 10]);
-            for entry in tree.filter_iter(BoundedIntersectsFilter::new_bounded(SAABB { min, max }))
-            {
-                black_box(entry);
-            }
-        });
-    }
-
-    #[bench]
-    #[cfg_attr(miri, ignore)]
-    fn query_bench_4(bencher: &mut Bencher) {
-        do_query_bench(bencher, 4);
-    }
-
-    #[bench]
-    #[cfg_attr(miri, ignore)]
-    fn query_bench_8(bencher: &mut Bencher) {
-        do_query_bench(bencher, 8);
-    }
-
-    #[bench]
-    #[cfg_attr(miri, ignore)]
-    fn query_bench_16(bencher: &mut Bencher) {
-        do_query_bench(bencher, 16);
-    }
-
-    #[bench]
-    #[cfg_attr(miri, ignore)]
-    fn query_bench_32(bencher: &mut Bencher) {
-        do_query_bench(bencher, 32);
-    }
-
-    #[bench]
-    #[cfg_attr(miri, ignore)]
-    fn query_bench_64(bencher: &mut Bencher) {
-        do_query_bench(bencher, 64);
-    }
-
-    #[bench]
-    #[cfg_attr(miri, ignore)]
-    fn query_bench_128(bencher: &mut Bencher) {
-        do_query_bench(bencher, 128);
-    }
-
-    #[bench]
-    #[cfg_attr(miri, ignore)]
-    fn query_bench_256(bencher: &mut Bencher) {
-        do_query_bench(bencher, 256);
     }
 
     struct StarInfo {
