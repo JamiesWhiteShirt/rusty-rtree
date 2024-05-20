@@ -67,10 +67,11 @@ where
     B: Bounds + Volume,
     Value: Bounded<B>,
 {
+    let bounds_volume = bounds.volume();
     children
         .into_iter()
+        .map(|value| Bounds::union(&value.bounds(), bounds).volume() - bounds_volume)
         .enumerate()
-        .map(|(i, value)| (i, Bounds::union(&value.bounds(), bounds).volume()))
         .min_by_key(|(_, volume)| *volume)
 }
 
@@ -111,7 +112,7 @@ where
         let (mut bounds_1, mut bounds_2) = (values[0].bounds(), group_2[0].bounds());
 
         let mut group_1_len = 1;
-        // children is now partitioned such that children[0..group_1_len] is group_1
+        // children is now partitioned such that children[..group_1_len] is group_1
         // and children[group_1_len..] is the remaining children to be distributed
         // into groups.
         // When the loop terminates, children is group_1.
