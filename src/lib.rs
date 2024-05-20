@@ -721,8 +721,44 @@ mod tests {
 
     #[bench]
     #[cfg_attr(miri, ignore)]
+    fn query_bench_4(bencher: &mut Bencher) {
+        do_query_bench(bencher, 4);
+    }
+
+    #[bench]
+    #[cfg_attr(miri, ignore)]
+    fn query_bench_8(bencher: &mut Bencher) {
+        do_query_bench(bencher, 8);
+    }
+
+    #[bench]
+    #[cfg_attr(miri, ignore)]
+    fn query_bench_16(bencher: &mut Bencher) {
+        do_query_bench(bencher, 16);
+    }
+
+    #[bench]
+    #[cfg_attr(miri, ignore)]
+    fn query_bench_32(bencher: &mut Bencher) {
+        do_query_bench(bencher, 32);
+    }
+
+    #[bench]
+    #[cfg_attr(miri, ignore)]
     fn query_bench_64(bencher: &mut Bencher) {
         do_query_bench(bencher, 64);
+    }
+
+    #[bench]
+    #[cfg_attr(miri, ignore)]
+    fn query_bench_128(bencher: &mut Bencher) {
+        do_query_bench(bencher, 128);
+    }
+
+    #[bench]
+    #[cfg_attr(miri, ignore)]
+    fn query_bench_256(bencher: &mut Bencher) {
+        do_query_bench(bencher, 256);
     }
 
     struct StarInfo {
