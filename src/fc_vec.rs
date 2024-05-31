@@ -34,6 +34,9 @@ impl<T> FCVec<T> {
     }
 }
 
+unsafe impl<T> Send for FCVec<T> where T: Send {}
+unsafe impl<T> Sync for FCVec<T> where T: Sync {}
+
 impl<T> Deref for FCVec<T> {
     type Target = [T];
 
