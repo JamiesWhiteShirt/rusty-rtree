@@ -87,6 +87,7 @@ impl<T: ?Sized> RcMutAlloc<T> {
     }
 }
 
+#[allow(dead_code)]
 impl<T> RcMutAlloc<[T]> {
     unsafe fn allocate_for_slice(len: usize) -> *mut RcMutBox<[T]> {
         let layout = alloc::Layout::array::<T>(len).unwrap();
@@ -112,14 +113,15 @@ impl<T> RcMutAlloc<[T]> {
         unsafe {
             self.make_mut_init_raw(|value_ptr| {
                 let value = &mut *(value_ptr as *mut [MaybeUninit<T>]);
-                for i in 0..value.len() {
-                    value[i].write(cb(i));
+                for (i, item) in value.iter_mut().enumerate() {
+                    item.write(cb(i));
                 }
             })
         }
     }
 }
 
+#[allow(dead_code)]
 impl<T> RcMutAlloc<T> {
     pub(crate) fn new() -> Self {
         let box_ = unsafe { Self::allocate_for_layout(alloc::Layout::new::<T>(), <*mut u8>::cast) };

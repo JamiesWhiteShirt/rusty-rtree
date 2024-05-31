@@ -88,16 +88,14 @@ where
                 } else {
                     level += 1;
                 }
+            } else if let Some(entry) = self
+                .stack
+                .leaf_mut()
+                .find(|(key, _)| filter.test_key(key.borrow()))
+            {
+                return Some((&entry.0, &entry.1));
             } else {
-                if let Some(entry) = self
-                    .stack
-                    .leaf_mut()
-                    .find(|(key, _)| filter.test_key(key.borrow()))
-                {
-                    return Some((&entry.0, &entry.1));
-                } else {
-                    level += 1;
-                }
+                level += 1;
             }
         }
         None
@@ -237,16 +235,14 @@ where
                 } else {
                     level += 1;
                 }
+            } else if let Some(entry) = self
+                .stack
+                .leaf_mut()
+                .find(|(key, _)| filter.test_key(key.borrow()))
+            {
+                return Some((&entry.0, &mut entry.1));
             } else {
-                if let Some(entry) = self
-                    .stack
-                    .leaf_mut()
-                    .find(|(key, _)| filter.test_key(key.borrow()))
-                {
-                    return Some((&entry.0, &mut entry.1));
-                } else {
-                    level += 1;
-                }
+                level += 1;
             }
         }
         None
@@ -347,12 +343,14 @@ union SortedIterItem<'a, B, Key, Value> {
     entry: &'a (Key, Value),
 }
 
+type IterHeap<Metric, Item> = BinaryHeap<Ranked<Reverse<(Metric, usize)>, Item>>;
+
 pub struct SortedIter<'a, B, Key, Value, R>
 where
     R: Ranking<B, Key>,
 {
     ranking: R,
-    entries: BinaryHeap<Ranked<Reverse<(R::Metric, usize)>, SortedIterItem<'a, B, Key, Value>>>,
+    entries: IterHeap<R::Metric, SortedIterItem<'a, B, Key, Value>>,
 
     _phantom: PhantomData<B>,
 }
@@ -424,7 +422,7 @@ where
     R: Ranking<B, Key>,
 {
     ranking: R,
-    entries: BinaryHeap<Ranked<Reverse<(R::Metric, usize)>, SortedIterItemMut<'a, B, Key, Value>>>,
+    entries: IterHeap<R::Metric, SortedIterItemMut<'a, B, Key, Value>>,
 
     _phantom: PhantomData<B>,
 }
@@ -494,7 +492,7 @@ where
     S: Ord,
 {
     ranking: R,
-    entries: BinaryHeap<Ranked<Reverse<(S, usize)>, SortedIterItem<'a, B, Key, Value>>>,
+    entries: IterHeap<S, SortedIterItem<'a, B, Key, Value>>,
 
     _phantom: PhantomData<B>,
 }
@@ -570,7 +568,7 @@ where
     S: Ord,
 {
     ranking: R,
-    entries: BinaryHeap<Ranked<Reverse<(S, usize)>, SortedIterItemMut<'a, B, Key, Value>>>,
+    entries: IterHeap<S, SortedIterItemMut<'a, B, Key, Value>>,
 
     _phantom: PhantomData<B>,
 }

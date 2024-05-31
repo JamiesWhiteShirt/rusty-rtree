@@ -47,7 +47,7 @@ impl<T> Deref for FCVec<T> {
 
 impl<T> DerefMut for FCVec<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { std::slice::from_raw_parts_mut(self.buf.as_ptr() as *mut T, self.len) }
+        unsafe { std::slice::from_raw_parts_mut(self.buf.as_ptr(), self.len) }
     }
 }
 
@@ -57,10 +57,6 @@ where
 {
     fn eq(&self, other: &Self) -> bool {
         self.len == other.len && self.iter().zip(other.iter()).all(|(a, b)| a == b)
-    }
-
-    fn ne(&self, other: &Self) -> bool {
-        self.len != other.len || self.iter().zip(other.iter()).any(|(a, b)| a != b)
     }
 }
 
@@ -130,7 +126,7 @@ impl Alloc {
 
     /// Allocates an empty [FCVec<T>] with the capacity specified by this
     /// Alloc in a safe [FCVecContainer<T>].
-    pub(crate) fn new<T>(&self) -> FCVecContainer<T> {
+    pub(crate) fn new_vec<T>(&self) -> FCVecContainer<T> {
         let layout = alloc::Layout::array::<T>(self.cap).unwrap();
         let buf = match NonNull::new(unsafe { alloc::alloc(layout) } as *mut T) {
             Some(ptr) => ptr,
@@ -176,7 +172,7 @@ impl Alloc {
         if vec.len() > self.cap {
             panic!("Vector is too large");
         }
-        let mut new = self.new();
+        let mut new = self.new_vec();
         for value in vec {
             new.push(value.clone());
         }
@@ -245,6 +241,7 @@ impl<'a, T> FCVecRefMut<'a, T> {
     /// # Panics
     ///
     /// Panics if the index is out of bounds or if the FCVec is full.
+    #[allow(dead_code)]
     pub(crate) fn insert(&mut self, index: usize, value: T) {
         if index > self.data.len {
             panic!("Index out of bounds");
@@ -267,6 +264,7 @@ impl<'a, T> FCVecRefMut<'a, T> {
     /// # Panics
     ///
     /// Panics if the index is out of bounds.
+    #[allow(dead_code)]
     pub(crate) fn remove(&mut self, index: usize) -> T {
         if index >= self.data.len {
             panic!("Index out of bounds");
@@ -333,7 +331,7 @@ impl<'a, T> FCVecRefMut<'a, T> {
     /// is invalid and must not be used, but is safe to dispose of.
     pub(crate) unsafe fn drop(mut self) {
         // Drop all items in the FCVec
-        while let Some(_) = self.pop() {}
+        while self.pop().is_some() {}
 
         let layout = alloc::Layout::array::<T>(self.ops.cap).unwrap();
         alloc::dealloc(self.data.buf.as_ptr() as *mut u8, layout);

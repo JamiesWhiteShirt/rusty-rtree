@@ -60,6 +60,11 @@ impl<'a, 'b, T0, T1> Iterator for ProductIter<'a, 'b, T0, T1> {
     }
 }
 
+type JoinIterStack<'a, 'b, B0, B1, Key0, Key1, Value0, Value1> = IterStack<
+    ProductIter<'a, 'b, (Key0, Value0), (Key1, Value1)>,
+    ProductIter<'a, 'b, Node<B0, Key0, Value0>, Node<B1, Key1, Value1>>,
+>;
+
 /// The iterator will simultaneously descend into both trees, joining the children of the nodes
 /// using the provided filter until it reaches the leaf nodes. In case the trees have different
 /// heights, the iterator will simultaneously descend into both trees until it reaches the leaf
@@ -70,12 +75,7 @@ where
     Q0: ?Sized,
     Q1: ?Sized,
 {
-    stack: Box<
-        IterStack<
-            ProductIter<'a, 'b, (Key0, Value0), (Key1, Value1)>,
-            ProductIter<'a, 'b, Node<B0, Key0, Value0>, Node<B1, Key1, Value1>>,
-        >,
-    >,
+    stack: Box<JoinIterStack<'a, 'b, B0, B1, Key0, Key1, Value0, Value1>>,
     padding0: usize,
     padding1: usize,
     filter: Filter,
@@ -193,14 +193,14 @@ where
                 } else {
                     level += 1;
                 }
+            } else if let Some((node0, node1)) = self
+                .stack
+                .leaf_mut()
+                .find(|(entry0, entry1)| self.filter.test_key(entry0.0.borrow(), entry1.0.borrow()))
+            {
+                return Some((node0, node1));
             } else {
-                if let Some((node0, node1)) = self.stack.leaf_mut().find(|(entry0, entry1)| {
-                    self.filter.test_key(&entry0.0.borrow(), &entry1.0.borrow())
-                }) {
-                    return Some((node0, node1));
-                } else {
-                    level += 1;
-                }
+                level += 1;
             }
         }
         None

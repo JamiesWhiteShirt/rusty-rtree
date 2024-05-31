@@ -196,7 +196,7 @@ impl Alloc {
                 Node::new(
                     Bounds::empty(),
                     NodeChildren {
-                        leaf: ManuallyDrop::new(self.children.new().leak()),
+                        leaf: ManuallyDrop::new(self.children.new_vec().leak()),
                     },
                 ),
                 0,
@@ -319,7 +319,7 @@ impl Alloc {
         match children {
             NodeChildrenRef::Inner(children) => {
                 let level = children.level;
-                let mut clone_children = self.children.new::<Node<B, Key, Value>>();
+                let mut clone_children = self.children.new_vec::<Node<B, Key, Value>>();
                 for child in children {
                     clone_children.push(self.clone_node(child).leak());
                 }
@@ -543,7 +543,7 @@ where
                         }
                     }
                 }
-                return None;
+                None
             }
             NodeChildrenRefMut::Leaf(mut children) => {
                 let index = children.iter().position(|(k, _)| k.borrow() == key);
@@ -553,7 +553,7 @@ where
 
                     return Some(value);
                 }
-                return None;
+                None
             }
         }
     }
@@ -565,7 +565,7 @@ impl<'a, B, Key, Value> NodeRefMut<'a, B, Key, Value> {
     }
 
     pub(crate) fn node(&self) -> &Node<B, Key, Value> {
-        &self.node
+        self.node
     }
 
     pub(crate) fn into_node(self) -> &'a mut Node<B, Key, Value> {
@@ -593,7 +593,7 @@ impl<'a, B, Key, Value> NodeRefMut<'a, B, Key, Value> {
         }
     }
 
-    pub(crate) fn children_mut<'b>(&'b mut self) -> NodeChildrenRefMut<'b, B, Key, Value> {
+    pub(crate) fn children_mut(&mut self) -> NodeChildrenRefMut<B, Key, Value> {
         if let Some(level) = NonZeroUsize::new(self.level) {
             NodeChildrenRefMut::Inner(InnerNodeChildrenRefMut {
                 alloc: self.alloc,
@@ -815,7 +815,7 @@ impl<B, Key, Value> NodeContainer<B, Key, Value> {
         }
 
         let bounds = B::union(&self.node.bounds, &sibling.node.bounds);
-        let mut next_root_children = self.alloc.children.new();
+        let mut next_root_children = self.alloc.children.new_vec();
         // The below operation redefines the root node to be an inner node that
         // contains the former root node and the provided sibling. This requires
         // moving the root into itself.
@@ -1018,6 +1018,13 @@ impl<'a, B, Key, Value> NodeRef<'a, B, Key, Value> {
         }
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        match self.children() {
+            NodeChildrenRef::Inner(children) => children.is_empty(),
+            NodeChildrenRef::Leaf(children) => children.is_empty(),
+        }
+    }
+
     pub(crate) fn get<Q>(&self, key: &Q) -> Option<&'a Value>
     where
         B: Contains<B>,
@@ -1036,7 +1043,7 @@ impl<'a, B, Key, Value> NodeRef<'a, B, Key, Value> {
                 None
             }
             NodeChildrenRef::Leaf(children) => children
-                .into_iter()
+                .iter()
                 .find(|(k, _)| k.borrow() == key)
                 .map(|(_, v)| v),
         }
@@ -1142,8 +1149,13 @@ impl<'a, B, Key, Value> InnerNodeChildrenRef<'a, B, Key, Value> {
         self.children
     }
 
+    #[allow(dead_code)]
     pub(crate) fn len(&self) -> usize {
         self.children.len()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.children.is_empty()
     }
 
     pub(crate) fn iter(&self) -> InnerNodeChildrenIter<'a, B, Key, Value> {
@@ -1220,6 +1232,7 @@ where
 }
 
 impl<'a, B, Key, Value> NodeChildrenRef<'a, B, Key, Value> {
+    #[allow(dead_code)]
     fn len(&self) -> usize {
         match self {
             NodeChildrenRef::Inner(children) => children.len(),
@@ -1294,7 +1307,7 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
         self.children.len()
     }
 
-    fn at_mut<'b>(&'b mut self, index: usize) -> NodeRefMut<'b, B, Key, Value> {
+    fn at_mut(&mut self, index: usize) -> NodeRefMut<B, Key, Value> {
         // SAFETY: The level of a child of an inner node is always one less than
         // the level of the inner node. The children of an inner node are
         // allocated by the same Alloc as the inner node.
@@ -1312,14 +1325,14 @@ impl<'a, B, Key, Value> InnerNodeChildrenRefMut<'a, B, Key, Value> {
         unsafe { self.alloc.wrap(child, self.level.get() - 1) }
     }
 
-    fn iter<'b>(&'b self) -> InnerNodeChildrenIter<'b, B, Key, Value> {
+    fn iter(&self) -> InnerNodeChildrenIter<B, Key, Value> {
         InnerNodeChildrenIter {
             level: self.level,
             children: self.children.iter(),
         }
     }
 
-    fn iter_mut<'b>(&'b mut self) -> InnerNodeChildrenIterMut<'b, B, Key, Value> {
+    fn iter_mut(&mut self) -> InnerNodeChildrenIterMut<B, Key, Value> {
         InnerNodeChildrenIterMut {
             alloc: self.alloc,
             level: self.level,
@@ -1453,7 +1466,7 @@ impl<B, Key, Value> IntoIterator for InnerNodeChildrenContainer<B, Key, Value> {
     }
 }
 
-impl<'a, B, Key, Value> Drop for InnerNodeChildrenContainer<B, Key, Value> {
+impl<B, Key, Value> Drop for InnerNodeChildrenContainer<B, Key, Value> {
     fn drop(&mut self) {
         // SAFETY: InnerNodeChildrenContainer has exclusive ownership of
         // self.children, so it is safe to drop.
@@ -1461,15 +1474,15 @@ impl<'a, B, Key, Value> Drop for InnerNodeChildrenContainer<B, Key, Value> {
     }
 }
 
-impl<'a, B, Key, Value> InnerNodeChildrenContainer<B, Key, Value> {
-    fn borrow(&'a self) -> InnerNodeChildrenRef<'a, B, Key, Value> {
+impl<B, Key, Value> InnerNodeChildrenContainer<B, Key, Value> {
+    fn borrow(&self) -> InnerNodeChildrenRef<B, Key, Value> {
         InnerNodeChildrenRef {
             level: self.level,
             children: &self.children,
         }
     }
 
-    fn borrow_mut(&'a mut self) -> InnerNodeChildrenRefMut<'a, B, Key, Value> {
+    fn borrow_mut(&mut self) -> InnerNodeChildrenRefMut<B, Key, Value> {
         InnerNodeChildrenRefMut {
             alloc: self.alloc,
             level: self.level,

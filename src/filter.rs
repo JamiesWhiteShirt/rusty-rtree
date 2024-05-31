@@ -221,8 +221,7 @@ where
     }
 }
 
-impl<'a, 'b, BL, BR, Key0, Key1, Filter> SpatialFilter<BR, Key1>
-    for JoiningFilter<'a, BL, Key0, Filter>
+impl<'a, BL, BR, Key0, Key1, Filter> SpatialFilter<BR, Key1> for JoiningFilter<'a, BL, Key0, Filter>
 where
     Key0: ?Sized,
     Key1: ?Sized,

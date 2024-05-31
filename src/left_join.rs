@@ -89,7 +89,7 @@ unsafe fn iterate_right_children<'a, B, Key, Value>(
     }
 }
 
-fn rewind<'a, Leaf, T>(iter: &mut InnerIterStack<Leaf, RewindableIter<'a, T>>) {
+fn rewind<Leaf, T>(iter: &mut InnerIterStack<Leaf, RewindableIter<T>>) {
     for i in 0..iter.len() {
         if i == iter.len() - 1 {
             iter[i].rewind();

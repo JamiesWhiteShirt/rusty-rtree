@@ -43,7 +43,7 @@ impl<Leaf, Inner> VecIterStack<Leaf, Inner> {
 
 impl<Leaf, Inner> Drop for VecIterStack<Leaf, Inner> {
     fn drop(&mut self) {
-        if self.0.len() > 0 {
+        if !self.0.is_empty() {
             unsafe { ManuallyDrop::drop(&mut self.0[0].leaf) }
         }
         for i in 1..self.0.len() {
@@ -65,21 +65,17 @@ impl<Leaf, Inner> IterStack<Leaf, Inner> {
         ptr::slice_from_raw_parts(data, len) as *mut Self
     }
 
-    pub(crate) unsafe fn init_into<'a>(
-        entries: &'a mut MaybeUninitIterStack<Leaf, Inner>,
+    pub(crate) unsafe fn init_into(
+        entries: &mut MaybeUninitIterStack<Leaf, Inner>,
         leaf: impl FnOnce() -> Leaf,
         mut inner: impl FnMut(NonZeroUsize) -> Inner,
-    ) -> &'a mut Self {
+    ) -> &mut Self {
         struct Guard<'a, Leaf, Inner> {
             target: &'a mut MaybeUninitIterStack<Leaf, Inner>,
             i: usize,
         }
 
         impl<'a, Leaf, Inner> Guard<'a, Leaf, Inner> {
-            fn new(target: &'a mut MaybeUninitIterStack<Leaf, Inner>) -> Self {
-                Self { target, i: 0 }
-            }
-
             fn len(&self) -> usize {
                 self.target.0.len()
             }
@@ -160,6 +156,7 @@ impl<Leaf, Inner> IterStack<Leaf, Inner> {
         unsafe { &mut self.0[0].leaf }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn map<Inner1, Leaf1>(
         &self,
         map_leaf: impl FnOnce(&Leaf) -> Leaf1,
@@ -286,7 +283,7 @@ impl<Leaf, Inner> IndexMut<RangeTo<NonZeroUsize>> for IterStack<Leaf, Inner> {
 
 impl<Leaf, Inner> Drop for IterStack<Leaf, Inner> {
     fn drop(&mut self) {
-        if self.0.len() > 0 {
+        if !self.0.is_empty() {
             unsafe { ManuallyDrop::drop(&mut self.0[0].leaf) }
         }
         for i in 1..self.0.len() {

@@ -54,7 +54,7 @@ where
         tmax = f64_max(f64_min(t1, tmax), f64_min(t2, tmax));
     }
 
-    return tmin < tmax;
+    tmin < tmax
 }
 
 pub(crate) fn line_bounds_intersect<N, const D: usize>(
@@ -77,7 +77,7 @@ where
         tmax = f64_max(f64_min(t1, tmax), f64_min(t2, tmax));
     }
 
-    return tmin <= tmax;
+    tmin <= tmax
 }
 
 #[cfg(test)]

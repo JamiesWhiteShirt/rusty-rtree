@@ -217,7 +217,7 @@ mod tests {
             max: SVec([3, 3]),
         };
 
-        assert_eq!(a.intersects(&b), true);
-        assert_eq!(b.intersects(&a), true);
+        assert!(a.intersects(&b));
+        assert!(b.intersects(&a));
     }
 }

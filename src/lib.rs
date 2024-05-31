@@ -93,12 +93,12 @@ pub struct RTree<B, Key, Value> {
 
 impl<B, Key, Value> RTree<B, Key, Value> {
     /// Returns an iterator over all entries in the R-tree.
-    pub fn iter<'a>(&'a self) -> iter::Iter<Box<TreeIter<'a, B, Key, Value>>> {
+    pub fn iter(&self) -> iter::Iter<Box<TreeIter<B, Key, Value>>> {
         iter::Iter::new(self.root.borrow())
     }
 
     /// Returns a mutable iterator over all entries in the R-tree.
-    pub fn iter_mut<'a>(&'a mut self) -> iter::IterMut<Box<TreeIterMut<'a, B, Key, Value>>> {
+    pub fn iter_mut(&mut self) -> iter::IterMut<Box<TreeIterMut<B, Key, Value>>> {
         iter::IterMut::new(self.root.borrow_mut())
     }
 
@@ -108,17 +108,17 @@ impl<B, Key, Value> RTree<B, Key, Value> {
         B: Bounds,
     {
         let ops = Alloc::new_alloc(config.min_children, config.max_children);
-        return RTree {
+        RTree {
             root: ops.new_leaf(),
-        };
+        }
     }
 
     /// Returns an iterator over all entries in the R-tree using a spatial
     /// filter.
-    pub fn filter_iter<'a, Q, Filter>(
-        &'a self,
+    pub fn filter_iter<Q, Filter>(
+        &self,
         filter: Filter,
-    ) -> FilterIter<Box<TreeIter<'a, B, Key, Value>>, Q, Filter>
+    ) -> FilterIter<Box<TreeIter<B, Key, Value>>, Q, Filter>
     where
         Key: Borrow<Q>,
         Q: ?Sized,
@@ -129,10 +129,10 @@ impl<B, Key, Value> RTree<B, Key, Value> {
 
     /// Returns a mutable iterator over all entries in the R-tree using a
     /// spatial filter.
-    pub fn filter_iter_mut<'a, Q, Filter: SpatialFilter<B, Q>>(
-        &'a mut self,
+    pub fn filter_iter_mut<Q, Filter>(
+        &mut self,
         filter: Filter,
-    ) -> iter::FilterIterMut<Box<TreeIterMut<'a, B, Key, Value>>, Q, Filter>
+    ) -> iter::FilterIterMut<Box<TreeIterMut<B, Key, Value>>, Q, Filter>
     where
         Key: Borrow<Q>,
         Q: ?Sized,
@@ -328,6 +328,11 @@ impl<B, Key, Value> RTree<B, Key, Value> {
     /// Returns the number of entries in the R-tree.
     pub fn len(&self) -> usize {
         self.root.borrow().len()
+    }
+
+    /// Returns `true` if the R-tree is empty.
+    pub fn is_empty(&self) -> bool {
+        self.root.borrow().is_empty()
     }
 
     fn _debug_assert_bvh(&self)
@@ -653,10 +658,11 @@ mod tests {
             }
         }
 
-        assert!(tree.len() == 0);
+        assert!(tree.is_empty());
     }
 
     struct StarInfo {
+        #[allow(dead_code)]
         id: u32,
         proper: String,
     }
@@ -711,10 +717,6 @@ mod tests {
             center: sol_pos,
             radius: n32(100.0),
         };
-        let bounds: SAABB<N32, 3> = SAABB {
-            min: sol_pos.into_map(|coord| coord - 100.0),
-            max: sol_pos.into_map(|coord| coord + 100.0),
-        };
 
         let mut star_lines = RTree::<SAABB<N32, 3>, Line<SVec<N32, 3>>, ()>::new(RTreeConfig {
             min_children: 4,
@@ -722,7 +724,7 @@ mod tests {
         });
 
         for (pos, info) in stars.filter_iter(BoundedIntersectsFilter::new_bounded(space)) {
-            if info.proper.len() > 0 {
+            if !info.proper.is_empty() {
                 println!("{}", info.proper);
             }
 
@@ -836,9 +838,9 @@ mod tests {
             mark_visited(&mut visited, key);
         }
 
-        for x in 0..10 {
-            for y in 0..10 {
-                assert!(visited[x][y]);
+        for ys in &visited {
+            for y in ys {
+                assert!(*y);
             }
         }
     }

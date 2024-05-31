@@ -14,14 +14,14 @@ where
     B: Bounds + Volume,
     Value: Bounded<B>,
 {
-    if values.len() < 1 {
+    if values.is_empty() {
         panic!("Must have more than 2 values!");
     }
     let mut greatest_volume_increase = N64::neg_infinity();
     let mut idx_1 = 0;
     let mut idx_2 = values.len();
-    for i in 0..values.len() {
-        let volume = Bounds::union(&values[i].bounds(), &overflow_value.bounds()).volume();
+    for (i, value) in values.iter().enumerate() {
+        let volume = Bounds::union(&value.bounds(), &overflow_value.bounds()).volume();
         if volume > greatest_volume_increase {
             greatest_volume_increase = volume;
             idx_1 = i;
@@ -69,7 +69,7 @@ where
 {
     let bounds_volume = bounds.volume();
     children
-        .into_iter()
+        .iter()
         .map(|value| Bounds::union(&value.bounds(), bounds).volume() - bounds_volume)
         .enumerate()
         .min_by_key(|(_, volume)| *volume)
@@ -78,10 +78,10 @@ where
 pub trait Splitter<B> {
     /// Splits values into two groups. When it returns, values contains the values of the first
     /// group while the other group is returned along with its minimum bounds.
-    fn split<'a, Value>(
+    fn split<Value>(
         &mut self,
         min_children: usize,
-        values: FCVecRefMut<'a, Value>,
+        values: FCVecRefMut<Value>,
         overflow_value: Value,
     ) -> (B, B, FCVecContainer<Value>)
     where
@@ -94,10 +94,10 @@ impl<B> Splitter<B> for QuadraticSplitter
 where
     B: Bounds + Volume,
 {
-    fn split<'a, Value>(
+    fn split<Value>(
         &mut self,
         min_children: usize,
-        mut values: FCVecRefMut<'a, Value>,
+        mut values: FCVecRefMut<Value>,
         overflow_value: Value,
     ) -> (B, B, FCVecContainer<Value>)
     where
@@ -107,8 +107,8 @@ where
             panic!("Must have more than 2 children to split!");
         }
 
-        let mut group_2 = values.ops().new();
-        group_2.push(seed_split_groups(&mut *values, overflow_value));
+        let mut group_2 = values.ops().new_vec();
+        group_2.push(seed_split_groups(&mut values, overflow_value));
         let (mut bounds_1, mut bounds_2) = (values[0].bounds(), group_2[0].bounds());
 
         let mut group_1_len = 1;
@@ -124,7 +124,7 @@ where
             );
 
             let add_to_group_1 = if candidate_1.1 < candidate_2.1 {
-                group_2.len() + remaining.len() - 1 >= min_children
+                group_2.len() + remaining.len() > min_children
             } else {
                 group_1_len + remaining.len() - 1 == min_children
             };
