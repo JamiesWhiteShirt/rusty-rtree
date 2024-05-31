@@ -137,7 +137,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
     /// same rank or multiple entries with the same key exist, the first entry
     /// is returned.
     ///
-    /// The [`Ranking`] invariants still apply using Option<S> order. If
+    /// The [`Ranking`] invariants still apply using `Option<S>` order. If
     /// `bounds_min(bounds)` is None, it implies that for all keys `k` contained
     /// by `bounds`, `rank_key(k)` is None.
     pub fn filter_min_by<R, S>(&self, ranking: R) -> Option<(&Key, &Value)>
@@ -154,7 +154,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
     /// have the same rank or multiple entries with the same key exist, the
     /// first entry is returned.
     ///
-    /// The [`Ranking`] invariants still apply using Option<S> order. If
+    /// The [`Ranking`] invariants still apply using `Option<S>` order. If
     /// `bounds_min(bounds)` is None, it implies that for all keys `k` contained
     /// by `bounds`, `rank_key(k)` is None.
     pub fn filter_min_by_mut<R, S>(&mut self, ranking: R) -> Option<(&Key, &mut Value)>
@@ -191,7 +191,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
     /// order_ according to the given [`Ranking`], filtering out entries whose
     /// key rank metric is None.
     ///
-    /// The [`Ranking`] invariants still apply using Option<S> order. If
+    /// The [`Ranking`] invariants still apply using `Option<S>` order. If
     /// `bounds_min(bounds)` is None, it implies that for all keys `k` contained
     /// by `bounds`, `rank_key(k)` is None.
     ///
@@ -212,7 +212,7 @@ impl<B, Key, Value> RTree<B, Key, Value> {
     /// key order_ according to the given [`Ranking`], filtering out entries
     /// whose key rank metric is None.
     ///
-    /// The [`Ranking`] invariants still apply using Option<S> order. If
+    /// The [`Ranking`] invariants still apply using `Option<S>` order. If
     /// `bounds_min(bounds)` is None, it implies that for all keys `k` contained
     /// by `bounds`, `rank_key(k)` is None.
     ///
