@@ -10,7 +10,7 @@ use crate::{
 
 /// A trait for defining a weak ordering of R-tree keys by a metric. In addition
 /// to providing a metric for keys, a ranking can also provide a lower bound
-/// for the metric for [`Bounds`] containing a set of keys.
+/// for the metric for bounds containing a set of keys.
 pub trait Ranking<B, Key>
 where
     Key: ?Sized,

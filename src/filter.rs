@@ -27,7 +27,7 @@ where
 }
 
 /// Matches keys that intersect the given space. To be used as a spatial filter,
-/// the space must implement [`Intersects`] with both [`Bounds`] and with the
+/// the space must implement [`Intersects`] with both the bounds type and the
 /// key type.
 pub struct IntersectsFilter<S> {
     space: S,
@@ -93,7 +93,7 @@ where
 }
 
 /// Matches keys that are contained by the given space. To be used as a spatial
-/// filter, the space must implement [`Intersects`] with [`Bounds`] and
+/// filter, the space must implement [`Intersects`] with the bounds type and
 /// [`Contains`] with the key type.
 pub struct ContainsFilter<S> {
     space: S,
