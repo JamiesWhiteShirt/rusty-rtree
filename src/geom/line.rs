@@ -1,37 +1,39 @@
-use std::{array, cmp, ops::Sub};
+use std::ops::Sub;
 
 use crate::{
     bounds::{Bounded, AABB, SAABB},
     intersects::{line_bounds_intersect, Intersects},
-    vector::SVec,
+    vector::{SVec, Vector},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Line<N, const D: usize>(pub SVec<N, D>, pub SVec<N, D>);
+pub struct Line<V>(pub V, pub V);
 
-impl<N, const D: usize> Bounded<SAABB<N, D>> for Line<N, D>
+impl<V> Bounded<AABB<V>> for Line<V>
 where
-    N: Ord + Clone + num_traits::Bounded,
+    V: Vector,
 {
-    fn bounds(&self) -> SAABB<N, D> {
-        let min = SVec(array::from_fn(|i| {
-            cmp::min(self.0[i].clone(), self.1[i].clone())
-        }));
-        let max = SVec(array::from_fn(|i| {
-            cmp::max(self.0[i].clone(), self.1[i].clone())
-        }));
-        AABB { min, max }
+    fn bounds(&self) -> AABB<V> {
+        AABB {
+            min: self.0.componentwise_min(&self.1),
+            max: self.0.componentwise_max(&self.1),
+        }
     }
 }
 
-impl<N, const D: usize> Line<N, D>
+impl<V> Line<V>
+where
+    V: Sub<Output = V> + Clone,
+{
+    pub fn delta(&self) -> V {
+        self.1.clone() - self.0.clone()
+    }
+}
+
+impl<N, const D: usize> Line<SVec<N, D>>
 where
     N: Clone + Sub<Output = N> + Into<f64>,
 {
-    pub fn delta(&self) -> SVec<N, D> {
-        self.1.clone() - self.0.clone()
-    }
-
     pub fn sq_len(&self) -> f64 {
         (self.delta()).into_map(|n| n.into()).sq_mag()
     }
@@ -41,7 +43,7 @@ where
     }
 }
 
-impl<N, const D: usize> Intersects<SAABB<N, D>> for Line<N, D>
+impl<N, const D: usize> Intersects<SAABB<N, D>> for Line<SVec<N, D>>
 where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
 {

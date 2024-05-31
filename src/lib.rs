@@ -684,7 +684,7 @@ mod tests {
             max: sol_pos.into_map(|coord| coord + 100.0),
         };
 
-        let mut star_lines = RTree::<SAABB<N32, 3>, Line<N32, 3>, ()>::new(RTreeConfig {
+        let mut star_lines = RTree::<SAABB<N32, 3>, Line<SVec<N32, 3>>, ()>::new(RTreeConfig {
             min_children: 4,
             max_children: 32,
         });

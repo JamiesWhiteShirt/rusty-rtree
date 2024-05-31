@@ -190,11 +190,11 @@ where
     }
 }
 
-impl<N, const D: usize> Intersects<Line<N, D>> for SAABB<N, D>
+impl<N, const D: usize> Intersects<Line<SVec<N, D>>> for SAABB<N, D>
 where
     N: Ord + Clone + Sub<Output = N> + Into<f64>,
 {
-    fn intersects(&self, rhs: &Line<N, D>) -> bool {
+    fn intersects(&self, rhs: &Line<SVec<N, D>>) -> bool {
         rhs.intersects(self)
     }
 }
