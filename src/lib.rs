@@ -653,6 +653,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn cosmic() -> Result<(), Box<dyn Error>> {
         let mut stars = RTree::<SAABB<N32, 3>, SVec<N32, 3>, StarInfo>::new(RTreeConfig {
             min_children: 4,
