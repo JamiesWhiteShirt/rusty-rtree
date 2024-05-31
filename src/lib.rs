@@ -1,3 +1,31 @@
+//! An R-tree implementation in Rust.
+//!
+//! # R-tree
+//!
+//! An R-tree is a spatial index that is optimized for range queries and nearest neighbor searches.
+//!
+//! The R-tree in this crate provides a map-like interface where entries are key-value pairs.
+//! Keys should represent the spatial extent of the entry and are immutable. Keys are aggregated
+//! into bounds that represent the spatial extent of of groups of keys, which are used to create a
+//! bounding volume hierarchy (BVH). Unlike a traditional map, keys are not necessarily unique, but
+//! uniqueness can be maintained by using the right methods. Values can be used to associate data
+//! with the keys. Unlike keys, values are mutable and can be modified in place.
+//!
+//! Spatial queries are provided as iterators that traverse the R-tree with a spatial filter. The
+//! filter can for example be used to match entries that intersect a given space. Ranked queries
+//! are also supported, allowing for efficient nearest neighbor searches. Filters and rankings
+//! operate on both keys and bounds in order to prune the search space.
+//!
+//! Join operations are also supported, allowing for efficient spatial joins between two R-trees.
+//!
+//! The R-tree is parameterized by a `RTreeConfig` that specifies the maximum
+//! and minimum number of children per node. This configuration will affect
+//! the performance of the R-tree in different operations. The optimal
+//! configuration will depend on the use case.
+//!
+//! # Safety
+//!
+//! Here be dragons. The R-tree is implemented using unsafe code.
 #![feature(ptr_metadata, layout_for_ptr)]
 
 pub mod bounds;
@@ -34,17 +62,21 @@ pub struct RTreeConfig {
     pub min_children: usize,
 }
 
-/// R-tree spatial index with a map-like interface. It optimizes for spatial
-/// queries, such as finding objects that intersect a given space, or finding
-/// the nearest object(s) to a given point.
+/// An R-tree is a spatial index that is optimized for range queries and nearest neighbor searches.
 ///
-/// The R-tree operates on objects that are bounded in `D` dimensions measured
-/// in scalars of type `N`. Each entry in the R-tree is a key-value pair, where
-/// the `Key` is a bounded object, while the `Value` may be used to store
-/// additional data associated with the object.
+/// Provides a map-like interface where entries are key-value pairs. Keys should represent the
+/// spatial extent of the entry and are immutable. Keys are aggregated into bounds that represent
+/// the spatial extent of of groups of keys, which are used to create a bounding volume hierarchy
+/// (BVH). Unlike a traditional map, keys are not necessarily unique, but uniqueness can be
+/// maintained by using the right methods. Values can be used to associate data with the keys.
+/// Unlike keys, values are mutable and can be modified in place.
 ///
-/// Unlike a traditional map, a single key may be associated with multiple
-/// values.
+/// Spatial queries are provided as iterators that traverse the R-tree with a spatial filter. The
+/// filter can for example be used to match entries that intersect a given space. Ranked queries
+/// are also supported, allowing for efficient nearest neighbor searches. Filters and rankings
+/// operate on both keys and bounds in order to prune the search space.
+///
+/// Join operations are also supported, allowing for efficient spatial joins between two R-trees.
 ///
 /// The R-tree is parameterized by a `RTreeConfig` that specifies the maximum
 /// and minimum number of children per node. This configuration will affect
