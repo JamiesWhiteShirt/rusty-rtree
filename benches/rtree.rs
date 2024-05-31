@@ -18,7 +18,7 @@ fn insert(c: &mut Criterion) {
             max_children,
             min_children,
         });
-        for i in 0..100000 {
+        for i in 0..10000 {
             let min = SVec([rng.gen_range(0..991), rng.gen_range(0..991)]);
             let max = min + SVec([rng.gen_range(1..11), rng.gen_range(1..11)]);
             tree.insert(SAABB { min, max }, i);
