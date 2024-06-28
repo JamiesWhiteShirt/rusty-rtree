@@ -1,6 +1,5 @@
 use std::{
     alloc,
-    borrow::Borrow,
     cell::{Cell, UnsafeCell},
     mem::MaybeUninit,
     ops::{Deref, DerefMut},
@@ -8,32 +7,43 @@ use std::{
 };
 
 #[repr(C)]
-struct RcMutBox<T: ?Sized> {
+pub(crate) struct RcMutBox<T: ?Sized> {
     shared: Cell<bool>,
     value: UnsafeCell<T>,
 }
 
-pub(crate) struct RcMutAlloc<T: ?Sized>(NonNull<RcMutBox<T>>);
+/// A helper trait for allocating boxes for `RcMut`. If layout_for_ptr and pointer_metadata
+/// stabilize, this trait will be obsolete.
+pub(crate) trait AllocHelper<T: ?Sized> {
+    fn layout(&self) -> alloc::Layout;
+    fn mem_to_box(&self, mem: *mut u8) -> *mut RcMutBox<T>;
+}
 
-impl<T: ?Sized> RcMutAlloc<T> {
-    unsafe fn allocate_for_layout(
-        layout: alloc::Layout,
-        mem_to_box: impl FnOnce(*mut u8) -> *mut RcMutBox<T>,
-    ) -> *mut RcMutBox<T> {
-        let layout = alloc::Layout::new::<RcMutBox<()>>()
+// NOTE: The layout can be derived from the pointer to the value, but this is not stable yet.
+pub(crate) struct RcMutAlloc<T: ?Sized, H: AllocHelper<T>>(NonNull<RcMutBox<T>>, H);
+
+impl<T: ?Sized, H: AllocHelper<T>> RcMutAlloc<T, H> {
+    unsafe fn box_layout(layout: alloc::Layout) -> alloc::Layout {
+        alloc::Layout::new::<RcMutBox<()>>()
             .extend(layout)
             .unwrap()
             .0
-            .pad_to_align();
+            .pad_to_align()
+    }
+
+    unsafe fn allocate_for_layout(helper: &H) -> *mut RcMutBox<T> {
+        let layout = Self::box_layout(helper.layout());
 
         match NonNull::new(alloc::alloc(layout)) {
-            Some(ptr) => mem_to_box(ptr.as_ptr()),
+            Some(ptr) => helper.mem_to_box(ptr.as_ptr()),
             None => alloc::handle_alloc_error(layout),
         }
     }
-}
 
-impl<T: ?Sized> RcMutAlloc<T> {
+    /*
+    If layout_for_ptr stabilizes, we can use this function instead of new_for_layout and remove the
+    layout field from RcMutAlloc.
+
     /// Creates a new `RcMutAlloc` for the given pointer to a value. The pointer does not need to be
     /// valid for reads or writes, but it must carry correct metadata for a value. The metadata will
     /// be used to determine the layout of the value when allocating the underlying box, and it will
@@ -43,7 +53,8 @@ impl<T: ?Sized> RcMutAlloc<T> {
     ///
     /// The safety of this function is dependent on [alloc::Layout::for_value_raw].
     pub(crate) unsafe fn new_for_value_raw(t: *const T) -> Self {
-        let box_ = Self::allocate_for_layout(alloc::Layout::for_value_raw(t), |mem| {
+        let layout = alloc::Layout::for_value_raw(t);
+        let box_ = Self::allocate_for_layout(layout, |mem| {
             // The metadata for Box<T> is the same as the metadata for T, but there is no way to
             // convince the compiler that <T as ptr::Pointee>::Metadata == <RcMutBox<T> as ptr::Pointee>::Metadata
             // The best we can do is cast *mut T to *mut RcMutBox<T>.
@@ -51,18 +62,14 @@ impl<T: ?Sized> RcMutAlloc<T> {
                 as *mut RcMutBox<T>
         });
         ptr::addr_of_mut!((*box_).shared).write(Cell::new(false));
-        Self(NonNull::new(box_).unwrap())
+        Self(NonNull::new(box_).unwrap(), layout)
     }
+    */
 
-    fn clone(&self) -> Self {
-        unsafe {
-            let box_ = Self::allocate_for_layout(
-                alloc::Layout::for_value(self.0.as_ref().value.borrow()),
-                |mem| ptr::from_raw_parts_mut(mem as *mut (), ptr::metadata(self.0.as_ptr())),
-            );
-            ptr::addr_of_mut!((*box_).shared).write(Cell::new(false));
-            Self(NonNull::new(box_).unwrap())
-        }
+    pub(crate) unsafe fn new_for_layout(helper: H) -> Self {
+        let box_ = Self::allocate_for_layout(&helper);
+        ptr::addr_of_mut!((*box_).shared).write(Cell::new(false));
+        Self(NonNull::new(box_).unwrap(), helper)
     }
 
     /// Initializes the value in the box with the given callback and returns a mutable reference to
@@ -72,7 +79,10 @@ impl<T: ?Sized> RcMutAlloc<T> {
     /// # Safety
     ///
     /// The caller must ensure that the value is fully initialized when the callback returns.
-    pub(crate) unsafe fn make_mut_init_raw(&mut self, init_value: impl FnOnce(*mut T)) -> RcMut<T> {
+    pub(crate) unsafe fn make_mut_init_raw(&mut self, init_value: impl FnOnce(*mut T)) -> RcMut<T>
+    where
+        H: Clone,
+    {
         unsafe {
             let shared = &*ptr::addr_of_mut!((*self.0.as_ptr()).shared);
             if shared.get() {
@@ -87,21 +97,23 @@ impl<T: ?Sized> RcMutAlloc<T> {
     }
 }
 
-#[allow(dead_code)]
-impl<T> RcMutAlloc<[T]> {
-    unsafe fn allocate_for_slice(len: usize) -> *mut RcMutBox<[T]> {
-        let layout = alloc::Layout::array::<T>(len).unwrap();
-        Self::allocate_for_layout(layout, |mem| {
-            ptr::slice_from_raw_parts(mem.cast::<T>(), len) as *mut RcMutBox<[T]>
-        })
+#[derive(Clone, Copy)]
+pub(crate) struct SliceAllocHelper(usize);
+
+impl<T> AllocHelper<[T]> for SliceAllocHelper {
+    fn layout(&self) -> alloc::Layout {
+        alloc::Layout::array::<T>(self.0).unwrap()
     }
 
+    fn mem_to_box(&self, mem: *mut u8) -> *mut RcMutBox<[T]> {
+        ptr::slice_from_raw_parts_mut(mem.cast::<T>(), self.0) as *mut RcMutBox<[T]>
+    }
+}
+
+#[allow(dead_code)]
+impl<T> RcMutAlloc<[T], SliceAllocHelper> {
     pub(crate) fn new_slice(len: usize) -> Self {
-        let box_ = unsafe { Self::allocate_for_slice(len) };
-        unsafe {
-            ptr::addr_of_mut!((*box_).shared).write(Cell::new(false));
-        }
-        Self(NonNull::new(box_).unwrap())
+        unsafe { Self::new_for_layout(SliceAllocHelper(len)) }
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -121,14 +133,23 @@ impl<T> RcMutAlloc<[T]> {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct SizedAllocHelper;
+
+impl<T> AllocHelper<T> for SizedAllocHelper {
+    fn layout(&self) -> alloc::Layout {
+        alloc::Layout::new::<T>()
+    }
+
+    fn mem_to_box(&self, mem: *mut u8) -> *mut RcMutBox<T> {
+        mem as *mut RcMutBox<T>
+    }
+}
+
 #[allow(dead_code)]
-impl<T> RcMutAlloc<T> {
+impl<T> RcMutAlloc<T, SizedAllocHelper> {
     pub(crate) fn new() -> Self {
-        let box_ = unsafe { Self::allocate_for_layout(alloc::Layout::new::<T>(), <*mut u8>::cast) };
-        unsafe {
-            ptr::addr_of_mut!((*box_).shared).write(Cell::new(false));
-        }
-        Self(NonNull::new(box_).unwrap())
+        unsafe { Self::new_for_layout(SizedAllocHelper) }
     }
 
     /// Initializes the value in the box with the given value and returns a mutable reference to it.
@@ -138,7 +159,20 @@ impl<T> RcMutAlloc<T> {
     }
 }
 
-impl<T: ?Sized> Drop for RcMutAlloc<T> {
+impl<T: ?Sized, H> Clone for RcMutAlloc<T, H>
+where
+    H: AllocHelper<T> + Clone,
+{
+    fn clone(&self) -> Self {
+        unsafe {
+            let box_ = Self::allocate_for_layout(&self.1);
+            ptr::addr_of_mut!((*box_).shared).write(Cell::new(false));
+            Self(NonNull::new(box_).unwrap(), self.1.clone())
+        }
+    }
+}
+
+impl<T: ?Sized, H: AllocHelper<T>> Drop for RcMutAlloc<T, H> {
     fn drop(&mut self) {
         unsafe {
             // We must deallocate if it is not shared
@@ -149,8 +183,7 @@ impl<T: ?Sized> Drop for RcMutAlloc<T> {
             {
                 // The value is uninitialized, so we don't need to drop it, but we still need to
                 // deallocate the memory
-                let layout = alloc::Layout::for_value(self.0.as_ref());
-                alloc::dealloc(self.0.as_ptr().cast(), layout);
+                alloc::dealloc(self.0.as_ptr().cast(), Self::box_layout(self.1.layout()));
             }
         }
     }
@@ -192,7 +225,7 @@ mod tests {
 
     #[test]
     fn test_reusable_box() {
-        let mut box_ = RcMutAlloc::<u32>::new();
+        let mut box_ = RcMutAlloc::<u32, SizedAllocHelper>::new();
         let mut value0 = box_.make_mut(41);
         let value1 = box_.make_mut(42);
         assert_eq!(*value0, 41);

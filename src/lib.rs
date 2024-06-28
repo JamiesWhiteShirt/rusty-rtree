@@ -26,8 +26,6 @@
 //! # Safety
 //!
 //! Here be dragons. The R-tree is implemented using unsafe code.
-#![feature(ptr_metadata, layout_for_ptr)]
-
 pub mod bounds;
 pub mod contains;
 mod fc_vec;

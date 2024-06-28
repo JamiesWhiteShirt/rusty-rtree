@@ -1,11 +1,12 @@
 use std::{
+    alloc::Layout,
     mem::{ManuallyDrop, MaybeUninit},
     num::NonZeroUsize,
     ops::{Index, IndexMut, Range, RangeFrom, RangeTo},
     ptr,
 };
 
-use crate::util::empty_slice;
+use crate::{rc_mut, util::empty_slice};
 
 pub(crate) union Entry<Leaf, Inner> {
     pub(crate) leaf: ManuallyDrop<Leaf>,
@@ -60,11 +61,26 @@ pub struct IterStack<Leaf, Inner>([Entry<Leaf, Inner>]);
 #[repr(transparent)]
 pub(crate) struct MaybeUninitIterStack<Leaf, Inner>([MaybeUninit<Entry<Leaf, Inner>>]);
 
-impl<Leaf, Inner> IterStack<Leaf, Inner> {
-    pub(crate) const fn from_raw_parts(data: *const Entry<Leaf, Inner>, len: usize) -> *const Self {
-        ptr::slice_from_raw_parts(data, len) as *mut Self
+#[derive(Clone, Copy)]
+pub(crate) struct IterStackAllocHelper(usize);
+
+impl IterStackAllocHelper {
+    pub(crate) fn new(len: usize) -> Self {
+        Self(len)
+    }
+}
+
+impl<Leaf, Inner> rc_mut::AllocHelper<IterStack<Leaf, Inner>> for IterStackAllocHelper {
+    fn layout(&self) -> Layout {
+        Layout::array::<Entry<Leaf, Inner>>(self.0).unwrap()
     }
 
+    fn mem_to_box(&self, mem: *mut u8) -> *mut rc_mut::RcMutBox<IterStack<Leaf, Inner>> {
+        ptr::slice_from_raw_parts_mut(mem, self.0) as *mut rc_mut::RcMutBox<IterStack<Leaf, Inner>>
+    }
+}
+
+impl<Leaf, Inner> IterStack<Leaf, Inner> {
     pub(crate) unsafe fn init_into(
         entries: &mut MaybeUninitIterStack<Leaf, Inner>,
         leaf: impl FnOnce() -> Leaf,

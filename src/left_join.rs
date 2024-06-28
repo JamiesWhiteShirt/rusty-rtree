@@ -1,11 +1,11 @@
 use core::slice;
-use std::{borrow::Borrow, cmp, marker::PhantomData, num::NonZeroUsize, ptr};
+use std::{borrow::Borrow, cmp, marker::PhantomData, num::NonZeroUsize};
 
 use crate::{
     bounds::Bounded,
     filter::{JoinFilter, JoiningFilter},
     iter::{FilterIter, TreeIter},
-    iter_stack::{InnerIterStack, IterStack, MaybeUninitIterStack},
+    iter_stack::{InnerIterStack, IterStack, IterStackAllocHelper, MaybeUninitIterStack},
     node::{Node, NodeRef},
     rc_mut::{self, RcMutAlloc},
     util::empty_slice,
@@ -57,7 +57,7 @@ where
 {
     left: Box<TreeIter<'l, BL, KeyL, ValueL>>,
     right: Box<RewindableTreeIter<'r, BR, KeyR, ValueR>>,
-    right_alloc: RcMutAlloc<TreeIter<'r, BR, KeyR, ValueR>>,
+    right_alloc: RcMutAlloc<TreeIter<'r, BR, KeyR, ValueR>, IterStackAllocHelper>,
     filter: Filter,
     _phantom: PhantomData<(&'l QL, &'r QR)>,
 }
@@ -125,10 +125,8 @@ where
             RewindableIter::new(slice::from_ref(root_right.node()));
 
         let right_alloc = unsafe {
-            RcMutAlloc::new_for_value_raw(IterStack::from_raw_parts(
-                ptr::null(),
-                root_right.level() + 2,
-            ))
+            let alloc_helper = IterStackAllocHelper::new(root_right.level() + 2);
+            RcMutAlloc::new_for_layout(alloc_helper)
         };
 
         Self {
